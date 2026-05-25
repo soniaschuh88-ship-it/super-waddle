@@ -122,18 +122,66 @@ export function isEngineReady(): boolean {
   return _engine !== null && _loadedModelId !== null && !_loading;
 }
 
+/** True while a model is currently loading. */
+export function isEngineLoading(): boolean {
+  return _loading;
+}
+
 /** ID of the currently loaded model, or null. */
 export function loadedModelId(): string | null {
   return _loadedModelId;
 }
 
+// ── Auto-load ─────────────────────────────────────────────────────────────────
+
+/**
+ * Ensure the engine is loaded, auto-loading the default model if it isn't.
+ * Pass an `onProgress` callback to receive download/init progress.
+ *
+ * Any component that wants to use WebLLM features without going through the
+ * wizard can call this directly (e.g. the Embeddings Lab in the admin panel).
+ */
+export async function ensureEngine(
+  modelId   = DEFAULT_MODEL_ID,
+  onProgress: (p: EngineProgress) => void = () => {},
+): Promise<void> {
+  if (isEngineReady() && _loadedModelId === modelId) {
+    onProgress({ progress: 100, text: 'Model already loaded.' });
+    return;
+  }
+  return loadEngine(modelId, onProgress);
+}
+
 // ── Inference ─────────────────────────────────────────────────────────────────
 
+/**
+ * Strict check — throws immediately if engine not loaded.
+ * Used internally where we need synchronous access.
+ */
 function requireEngine(): WebWorkerMLCEngine {
   if (!_engine || !_loadedModelId) {
-    throw new Error('WebLLM engine not loaded. Call loadEngine() first.');
+    throw new Error(
+      'WebLLM engine not loaded. ' +
+      'Call loadEngine() or ensureEngine() first, or use a REST backend (Ollama / node-llama-cpp).',
+    );
   }
   return _engine;
+}
+
+/**
+ * Lazy engine accessor — auto-loads the default model if not ready.
+ * All public inference functions use this so callers never see
+ * the "not loaded" error; instead they wait for the download.
+ *
+ * Pass `onProgress` if you want to surface download progress.
+ */
+async function getOrLoadEngine(
+  onProgress?: (p: EngineProgress) => void,
+): Promise<WebWorkerMLCEngine> {
+  if (!isEngineReady()) {
+    await ensureEngine(DEFAULT_MODEL_ID, onProgress ?? (() => {}));
+  }
+  return requireEngine();
 }
 
 /**
@@ -143,8 +191,9 @@ function requireEngine(): WebWorkerMLCEngine {
 export async function generateJson<T>(
   systemPrompt: string,
   userPrompt:   string,
+  onProgress?:  (p: EngineProgress) => void,
 ): Promise<T | null> {
-  const engine = requireEngine();
+  const engine = await getOrLoadEngine(onProgress);
 
   const resp = await engine.chat.completions.create({
     stream:      false,
@@ -181,8 +230,9 @@ export async function generateStreaming(
   userPrompt:   string,
   onChunk:      (chunk: string) => void,
   maxTokens     = 4096,
+  onProgress?:  (p: EngineProgress) => void,
 ): Promise<string> {
-  const engine = requireEngine();
+  const engine = await getOrLoadEngine(onProgress);
 
   const stream = await engine.chat.completions.create({
     stream:      true,
@@ -215,11 +265,12 @@ export async function generateStreaming(
  *   const result = await generateTextCompletion('function add(a, b) {', { maxTokens: 64 });
  */
 export async function generateTextCompletion(
-  prompt:    string,
-  opts:      { maxTokens?: number; temperature?: number; seed?: number } = {},
-  onChunk?:  (chunk: string) => void,
+  prompt:      string,
+  opts:        { maxTokens?: number; temperature?: number; seed?: number } = {},
+  onChunk?:    (chunk: string) => void,
+  onProgress?: (p: EngineProgress) => void,
 ): Promise<string> {
-  const engine = requireEngine();
+  const engine = await getOrLoadEngine(onProgress);
 
   if (onChunk) {
     const stream = await engine.completions.create({
@@ -255,8 +306,11 @@ export async function generateTextCompletion(
  *
  * @returns Array of float32 arrays, one per input text.
  */
-export async function createEmbeddings(texts: string[]): Promise<number[][]> {
-  const engine = requireEngine();
+export async function createEmbeddings(
+  texts:       string[],
+  onProgress?: (p: EngineProgress) => void,
+): Promise<number[][]> {
+  const engine = await getOrLoadEngine(onProgress);
   const resp   = await engine.embeddings.create({
     input: texts,
     model: _loadedModelId ?? '',
@@ -270,8 +324,12 @@ export async function createEmbeddings(texts: string[]): Promise<number[][]> {
  * Compute cosine similarity between two texts.
  * Returns a value in [0, 1] where 1 = identical meaning.
  */
-export async function computeSemanticSimilarity(text1: string, text2: string): Promise<number> {
-  const [v1, v2] = await createEmbeddings([text1, text2]);
+export async function computeSemanticSimilarity(
+  text1:       string,
+  text2:       string,
+  onProgress?: (p: EngineProgress) => void,
+): Promise<number> {
+  const [v1, v2] = await createEmbeddings([text1, text2], onProgress);
   return cosineSimilarity(v1, v2);
 }
 
@@ -312,7 +370,7 @@ export async function generateWithTools(
   handlers:  Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>>,
   opts:      { temperature?: number; maxTokens?: number; seed?: number } = {},
 ): Promise<{ answer: string; toolCalls: ToolCallResult[] }> {
-  const engine    = requireEngine();
+  const engine    = await getOrLoadEngine();
   const toolCalls: ToolCallResult[] = [];
   const allMessages = [...messages];
 

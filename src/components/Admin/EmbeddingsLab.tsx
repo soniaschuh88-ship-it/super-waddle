@@ -14,10 +14,14 @@
  */
 import { useState, useCallback } from 'react';
 import {
-  Plus, Trash2, Zap, RefreshCw, Info, ChevronUp,
+  Plus, Trash2, Zap, RefreshCw, Info, ChevronUp, Cpu, Loader2,
 } from 'lucide-react';
-import { computeSemanticSimilarity, createEmbeddings, isEngineReady } from '@/lib/webllm';
-import type { BackendConfig } from '@/types';
+import {
+  computeSemanticSimilarity, createEmbeddings, isEngineReady,
+  isEngineLoading, ensureEngine, loadedModelId,
+  MODEL_OPTIONS, DEFAULT_MODEL_ID,
+} from '@/lib/webllm';
+import type { BackendConfig, EngineProgress } from '@/types';
 
 // ── Backend helpers ───────────────────────────────────────────────────────────
 
@@ -139,16 +143,35 @@ export function EmbeddingsLab({ backendConfig }: Props) {
   const [candidates, setCandidates]   = useState<string[]>(['', '']);
   const [pairScore, setPairScore]     = useState<number | null>(null);
   const [ranked, setRanked]           = useState<Array<{ text: string; score: number }>>([]);
-  const [loading, setLoading]         = useState(false);
-  const [err, setErr]                 = useState('');
-  const [embDim, setEmbDim]           = useState<number | null>(null);
-  const [showInfo, setShowInfo]       = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [err, setErr]                   = useState('');
+  const [embDim, setEmbDim]             = useState<number | null>(null);
+  const [showInfo, setShowInfo]         = useState(false);
+  // WebLLM loader state
+  const [modelToLoad, setModelToLoad]   = useState(DEFAULT_MODEL_ID);
+  const [loadProgress, setLoadProgress] = useState<EngineProgress | null>(null);
+  const [loadErr, setLoadErr]           = useState('');
 
   const useWebGpu = !backendConfig || backendConfig.type === 'webgpu';
   const serverUrl = backendConfig?.serverUrl ?? 'http://localhost:8001';
+  const engineReady   = isEngineReady();
+  const engineLoading = isEngineLoading();
+  const activeModel   = loadedModelId();
+
+  const handleLoadEngine = useCallback(async () => {
+    setLoadErr(''); setLoadProgress({ progress: 0, text: 'Starting…' });
+    try {
+      await ensureEngine(modelToLoad, p => setLoadProgress(p));
+      setLoadProgress(null);
+    } catch (e) {
+      setLoadErr(e instanceof Error ? e.message : 'Load failed');
+      setLoadProgress(null);
+    }
+  }, [modelToLoad]);
 
   const canRun = refText.trim().length > 0 &&
-    (mode === 'pair' ? pairText.trim().length > 0 : candidates.some(c => c.trim().length > 0));
+    (mode === 'pair' ? pairText.trim().length > 0 : candidates.some(c => c.trim().length > 0)) &&
+    (useWebGpu ? engineReady : true);
 
   // ── Pair mode ───────────────────────────────────────────────────────────────
 
@@ -157,7 +180,6 @@ export function EmbeddingsLab({ backendConfig }: Props) {
     try {
       let score: number;
       if (useWebGpu) {
-        if (!isEngineReady()) throw new Error('WebGPU engine not loaded. Load a model in the wizard first.');
         score = await computeSemanticSimilarity(refText.trim(), pairText.trim());
         // Also peek at embedding dimension
         const [v] = await createEmbeddings([refText.trim()]);
@@ -182,7 +204,6 @@ export function EmbeddingsLab({ backendConfig }: Props) {
     try {
       let vectors: number[][];
       if (useWebGpu) {
-        if (!isEngineReady()) throw new Error('WebGPU engine not loaded.');
         vectors = await createEmbeddings(valid);
         setEmbDim(vectors[0].length);
       } else {
@@ -238,18 +259,83 @@ export function EmbeddingsLab({ backendConfig }: Props) {
       )}
 
       {/* Backend badge */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className={`text-[11px] px-2 py-0.5 rounded-full border font-medium ${
           useWebGpu
             ? 'bg-accent/10 border-accent/30 text-accent'
             : 'bg-info/10 border-info/30 text-blue-400'
         }`}>
-          {useWebGpu ? 'WebGPU (web-llm)' : `llama-cpp server · ${serverUrl}`}
+          {useWebGpu
+            ? `WebGPU (web-llm)${activeModel ? ` · ${activeModel.split('/').pop()}` : ''}`
+            : `llama-cpp server · ${serverUrl}`}
         </span>
-        {useWebGpu && !isEngineReady() && (
-          <span className="text-[11px] text-warning">⚠ Load a model in the wizard first</span>
-        )}
+        {useWebGpu && engineReady  && <span className="text-[11px] text-success">✓ engine ready</span>}
+        {useWebGpu && engineLoading && <span className="text-[11px] text-accent flex items-center gap-1"><Loader2 size={10} className="animate-spin"/>loading…</span>}
       </div>
+
+      {/* ── Inline WebLLM loader (shown when WebGPU is selected but engine not loaded) ── */}
+      {useWebGpu && !engineReady && !engineLoading && (
+        <div className="rounded-xl border border-border bg-panel p-4 flex flex-col gap-3 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <Cpu size={16} className="text-accent"/>
+            <span className="text-sm font-semibold text-text-primary">Load WebLLM Model</span>
+            <span className="text-xs text-muted ml-1">— required to use embeddings in-browser</span>
+          </div>
+
+          <p className="text-xs text-muted leading-relaxed">
+            Select a model and click Load. The model downloads to your browser cache (~210 MB – 2 GB depending on selection).
+            Alternatively, switch to the <strong className="text-text-primary">Ollama</strong> or{' '}
+            <strong className="text-text-primary">node-llama-cpp</strong> backend which requires no download here.
+          </p>
+
+          <div className="flex gap-2">
+            <select value={modelToLoad} onChange={e => setModelToLoad(e.target.value)}
+              className="flex-1 bg-base border border-border text-text-primary text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-accent/60">
+              {MODEL_OPTIONS.map(m => (
+                <option key={m.id} value={m.id}>{m.label} (~{m.sizeMb} MB)</option>
+              ))}
+            </select>
+            <button onClick={handleLoadEngine}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-accent text-base hover:bg-accent-dim btn-glow rounded-lg transition-colors cursor-pointer">
+              <Cpu size={13}/>Load Model
+            </button>
+          </div>
+
+          {/* Load progress */}
+          {loadProgress && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-muted font-mono">{loadProgress.text || 'Loading…'}</span>
+                <span className="text-accent font-mono font-semibold tabular-nums">{loadProgress.progress}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-border overflow-hidden">
+                <div className="h-full bg-accent rounded-full transition-all duration-300"
+                  style={{ width: `${loadProgress.progress}%` }}/>
+              </div>
+            </div>
+          )}
+
+          {loadErr && <p className="text-xs text-error">{loadErr}</p>}
+        </div>
+      )}
+
+      {/* Loading spinner when engine is initialising */}
+      {useWebGpu && engineLoading && (
+        <div className="rounded-xl border border-accent/30 bg-accent/5 p-4 flex items-center gap-3 animate-fade-in">
+          <Loader2 size={18} className="text-accent animate-spin flex-shrink-0"/>
+          <div>
+            <p className="text-sm font-medium text-text-primary">
+              {loadProgress ? loadProgress.text : 'Loading model…'}
+            </p>
+            {loadProgress && (
+              <div className="mt-1.5 h-1.5 rounded-full bg-border overflow-hidden w-48">
+                <div className="h-full bg-accent rounded-full transition-all duration-300"
+                  style={{ width: `${loadProgress.progress}%` }}/>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Mode tabs */}
       <div className="flex gap-2">
