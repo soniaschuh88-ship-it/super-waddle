@@ -1,0 +1,98 @@
+/**
+ * src/components/Admin/AdminApp.tsx
+ * Top-level admin dashboard — password gate + tabbed sections.
+ */
+import { useState, useEffect } from 'react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server } from 'lucide-react';
+import { AdminAuth, checkPassword } from './AdminAuth';
+import { OllamaManager } from './OllamaManager';
+import { WebLLMCache } from './WebLLMCache';
+import { SystemStats } from './SystemStats';
+import { AISettings } from './AISettings';
+
+const SESSION_KEY = 'icadp_admin_unlocked';
+
+type Tab = 'stats' | 'ollama' | 'webllm' | 'settings';
+
+const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
+  { id:'stats',    label:'System Stats',    icon:BarChart2 },
+  { id:'ollama',   label:'Ollama Manager',  icon:Server },
+  { id:'webllm',   label:'WebLLM Cache',    icon:HardDrive },
+  { id:'settings', label:'AI Settings',     icon:Settings },
+];
+
+export function AdminApp() {
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
+  const [tab, setTab]           = useState<Tab>('stats');
+
+  // Persist unlock across soft navigations within the same browser tab
+  useEffect(() => {
+    if (unlocked) sessionStorage.setItem(SESSION_KEY, '1');
+    else sessionStorage.removeItem(SESSION_KEY);
+  }, [unlocked]);
+
+  const handleUnlock = () => setUnlocked(true);
+  const handleLock   = () => { setUnlocked(false); checkPassword('').catch(()=>{}); };
+
+  if (!unlocked) return <AdminAuth onUnlock={handleUnlock}/>;
+
+  const ActiveTab = TABS.find(t=>t.id===tab)!;
+
+  return (
+    <div className="min-h-screen bg-base text-text-primary flex flex-col">
+      {/* Header */}
+      <header className="flex-shrink-0 h-14 flex items-center justify-between px-6 border-b border-border glass">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent/15 border border-accent/30">
+            <Cpu size={18} className="text-accent"/>
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-text-primary tracking-tight">ICADP Admin</span>
+            <span className="ml-2 text-[10px] text-accent font-mono tracking-widest">v3.0</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <a href="/" className="text-xs text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface transition-colors">
+            ← App
+          </a>
+          <button onClick={handleLock} className="flex items-center gap-1.5 text-xs text-muted hover:text-error px-2 py-1 rounded hover:bg-surface transition-colors">
+            <LogOut size={13}/>Lock
+          </button>
+        </div>
+      </header>
+
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        <aside className="w-52 flex-shrink-0 border-r border-border bg-panel flex flex-col py-3">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={()=>setTab(t.id)}
+                className={['flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-l-2 text-sm',
+                  t.id===tab ? 'bg-accent/10 border-accent text-accent font-medium' : 'border-transparent text-muted hover:bg-surface hover:text-text-primary'].join(' ')}>
+                <Icon size={15}/>
+                {t.label}
+              </button>
+            );
+          })}
+        </aside>
+
+        {/* Content */}
+        <main className="flex-1 overflow-auto p-8">
+          <div className="max-w-3xl">
+            <div className="flex items-center gap-2 mb-6">
+              <ActiveTab.icon size={18} className="text-accent"/>
+              <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
+            </div>
+
+            {tab==='stats'    && <SystemStats/>}
+            {tab==='ollama'   && <OllamaManager/>}
+            {tab==='webllm'   && <WebLLMCache/>}
+            {tab==='settings' && <AISettings/>}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
