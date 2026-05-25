@@ -48,7 +48,7 @@ export function AISettings() {
         <div className="flex flex-col gap-1.5">
           <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Default Backend</label>
           <div className="flex gap-2 flex-wrap">
-            {(['webgpu','ollama','mlc-server','llama-node'] as BackendType[]).map(t=>(
+            {(['webgpu','ollama','llama-cpp'] as BackendType[]).map(t=>(
               <button key={t} onClick={()=>setCfg(p=>({...p,backendType:t}))}
                 className={['px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
                   cfg.backendType===t?'bg-accent/15 border-accent/50 text-accent':'bg-base border-border text-muted hover:border-accent/30 hover:text-text-primary'].join(' ')}>

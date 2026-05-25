@@ -1,8 +1,8 @@
 /** src/context/AppContext.tsx – Global state via React context + useReducer. */
 import { createContext, useContext, useReducer, type Dispatch, type ReactNode } from 'react';
-import type { AppAction, AppState, BackendConfig, BundleFileName, GeneratedBundle } from '@/types';
+import type { AppAction, AppState, BackendConfig, BundleFileName, GeneratedBundle, ProjectFile } from '@/types';
 
-export const DEFAULT_BACKEND: BackendConfig = { type: 'webgpu', serverUrl: 'http://localhost:11434', modelId: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC' };
+export const DEFAULT_BACKEND: BackendConfig = { type: 'webgpu', serverUrl: 'http://localhost:8001', modelId: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC' };
 
 const initialState: AppState = {
   stage: 'stufe1', stufe1Step: 'idea',
@@ -12,6 +12,8 @@ const initialState: AppState = {
   generatingFileName: null, streamBuffer: '',
   validationResult: null,
   simulationLogs: [], simulationRunning: false, simulationVirtualTree: [],
+  projectFiles: [], selectedFilePath: null, versions: [],
+  agentMessages: [], milestone: null, codegenRunning: false,
   globalError: null,
 };
 
@@ -52,6 +54,28 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'CLEAR_SIMULATION':       return { ...state, simulationLogs:[], simulationRunning:false, simulationVirtualTree:[] };
     case 'SET_SIMULATION_RUNNING': return { ...state, simulationRunning: action.running };
     case 'ADD_VIRTUAL_FILE':       return { ...state, simulationVirtualTree: [...state.simulationVirtualTree, action.node] };
+    // ── Code Studio ──────────────────────────────────────────────────────────
+    case 'ADD_PROJECT_FILE':
+      return { ...state, projectFiles: [...state.projectFiles, action.file], selectedFilePath: action.file.path };
+    case 'UPDATE_FILE_STREAM': {
+      const files = state.projectFiles.map((f): ProjectFile =>
+        f.path === action.path ? { ...f, content: f.content + action.chunk } : f,
+      );
+      return { ...state, projectFiles: files };
+    }
+    case 'FINISH_FILE_STREAM': {
+      const files = state.projectFiles.map((f): ProjectFile =>
+        f.path === action.path ? { ...f, isStreaming: false } : f,
+      );
+      return { ...state, projectFiles: files };
+    }
+    case 'SET_SELECTED_FILE':   return { ...state, selectedFilePath: action.path };
+    case 'ADD_VERSION':         return { ...state, versions: [...state.versions, action.version] };
+    case 'ADD_AGENT_MESSAGE':   return { ...state, agentMessages: [...state.agentMessages, action.message] };
+    case 'SET_MILESTONE':       return { ...state, milestone: action.milestone };
+    case 'SET_CODEGEN_RUNNING': return { ...state, codegenRunning: action.running };
+    case 'RESET_CODE_STUDIO':
+      return { ...state, projectFiles: [], selectedFilePath: null, versions: [], agentMessages: [], milestone: null, codegenRunning: false };
     case 'SET_ERROR':   return { ...state, globalError: action.message };
     case 'CLEAR_ERROR': return { ...state, globalError: null };
     default: return state;

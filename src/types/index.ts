@@ -3,7 +3,12 @@
 export type Stage = 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3';
 export type Stufe1Step = 'idea' | 'features' | 'generating';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error';
-export type BackendType = 'webgpu' | 'mlc-server' | 'llama-node' | 'ollama';
+/** Inference backend selection.
+ *  webgpu     – @mlc-ai/web-llm running in-browser via WebGPU (no server)
+ *  ollama     – local `ollama serve` (OpenAI-compatible REST)
+ *  llama-cpp  – bundled node-llama-cpp Express server in server/ (GGUF, GPU auto-detect)
+ */
+export type BackendType = 'webgpu' | 'ollama' | 'llama-cpp';
 
 export interface BackendConfig {
   type: BackendType;
@@ -11,12 +16,17 @@ export interface BackendConfig {
   modelId: string;
 }
 
+export type FeaturePriority  = 'high' | 'medium' | 'low';
+export type FeatureComplexity = 'XS' | 'S' | 'M' | 'L' | 'XL';
+
 export interface FeatureProposal {
-  id: string;
-  title: string;
-  rationale: string;
-  accepted: boolean;
-  techHint?: string;
+  id:          string;
+  title:       string;
+  rationale:   string;
+  accepted:    boolean;
+  priority:    FeaturePriority;
+  complexity:  FeatureComplexity;
+  techHint?:   string;
 }
 
 export interface ManifestEntry {
@@ -82,6 +92,44 @@ export interface Project {
 
 export interface EngineProgress { progress: number; text: string; }
 
+// ── Code Studio ────────────────────────────────────────────────────────────────
+
+/** A real generated code file (not simulated). */
+export interface ProjectFile {
+  path:        string;    // relative path, e.g. "src/db.ts"
+  content:     string;    // full file content
+  language:    string;    // monaco language id, e.g. "typescript"
+  role:        string;    // from manifest, e.g. "Database layer"
+  isStreaming: boolean;   // true while LLM is writing it
+  versionIdx:  number;    // which version snapshot this belongs to
+}
+
+/** A versioned snapshot of the project files at a milestone. */
+export interface CodeVersion {
+  idx:         number;
+  label:       string;     // e.g. "Phase 1 — Foundation"
+  timestamp:   string;     // ISO
+  files:       ProjectFile[];
+  filesCount:  number;
+}
+
+/** A chat message in the agent dialogue. */
+export interface AgentMessage {
+  id:        string;
+  role:      'agent' | 'user';
+  content:   string;
+  timestamp: string;
+}
+
+/** State for the milestone pause dialog. */
+export interface MilestoneState {
+  phase:        number;        // 1, 2, 3
+  label:        string;
+  filesWritten: number;
+  totalFiles:   number;
+  suggestedFeatures: string[]; // agent's suggestions for next features
+}
+
 export interface AppState {
   stage: Stage;
   stufe1Step: Stufe1Step;
@@ -97,6 +145,13 @@ export interface AppState {
   simulationLogs: SimulationLogEntry[];
   simulationRunning: boolean;
   simulationVirtualTree: FileTreeNode[];
+  // Code Studio
+  projectFiles:    ProjectFile[];
+  selectedFilePath: string | null;
+  versions:        CodeVersion[];
+  agentMessages:   AgentMessage[];
+  milestone:       MilestoneState | null;
+  codegenRunning:  boolean;
   globalError: string | null;
 }
 
@@ -122,5 +177,15 @@ export type AppAction =
   | { type: 'CLEAR_SIMULATION' }
   | { type: 'SET_SIMULATION_RUNNING'; running: boolean }
   | { type: 'ADD_VIRTUAL_FILE'; node: FileTreeNode }
+  // Code Studio
+  | { type: 'ADD_PROJECT_FILE';    file: ProjectFile }
+  | { type: 'UPDATE_FILE_STREAM';  path: string; chunk: string }
+  | { type: 'FINISH_FILE_STREAM';  path: string }
+  | { type: 'SET_SELECTED_FILE';   path: string | null }
+  | { type: 'ADD_VERSION';         version: CodeVersion }
+  | { type: 'ADD_AGENT_MESSAGE';   message: AgentMessage }
+  | { type: 'SET_MILESTONE';       milestone: MilestoneState | null }
+  | { type: 'SET_CODEGEN_RUNNING'; running: boolean }
+  | { type: 'RESET_CODE_STUDIO' }
   | { type: 'SET_ERROR'; message: string }
   | { type: 'CLEAR_ERROR' };

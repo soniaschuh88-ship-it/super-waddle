@@ -21,7 +21,7 @@ export function SystemStats() {
   useEffect(() => { void load(); }, []);
 
   const BACKEND_LABELS: Record<string, string> = {
-    webgpu: 'WebGPU', ollama: 'Ollama', 'mlc-server': 'MLC-LLM', 'llama-node': 'llama.node',
+    webgpu: 'WebGPU', ollama: 'Ollama', 'llama-cpp': 'node-llama-cpp',
   };
 
   return (

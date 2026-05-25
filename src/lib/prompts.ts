@@ -3,10 +3,36 @@
  */
 import type { FeatureProposal } from '@/types';
 
-export const FEATURE_SYSTEM_PROMPT = `You are a senior software architect. Analyse a raw product idea and propose the best MVP features.
-Respond ONLY with valid JSON (no markdown fences):
-[{"id":"<kebab-id>","title":"<Feature>","rationale":"<1-2 sentences>","accepted":true,"techHint":"<optional>"}]
-Propose 5-10 features. Prefer simplicity. No gold-plating.`;
+// ── Idea enhancement ─────────────────────────────────────────────────────────
+
+export const ENHANCE_IDEA_SYSTEM = `You are a senior product manager and software architect.
+Your task: take a rough product idea and rewrite it as a clear, detailed product brief.
+
+Rules:
+- Keep the original intent exactly — do NOT change what the product is
+- Add: target users, core use-cases, key constraints, tech context if implied
+- Output ONLY the improved idea text (plain text, no headings, no bullet lists)
+- Length: 150–300 words
+- Tone: direct, technical, no marketing fluff`;
+
+export function buildEnhanceIdeaUserPrompt(idea: string): string {
+  return `Enhance this product idea into a clear brief:\n"""\n${idea}\n"""`;
+}
+
+// ── Feature proposals ─────────────────────────────────────────────────────────
+
+export const FEATURE_SYSTEM_PROMPT = `You are a senior software architect. Analyse a product idea and propose MVP features.
+Respond ONLY with valid JSON array (no markdown fences, no prose):
+[{
+  "id":         "<kebab-case-id>",
+  "title":      "<Feature Name>",
+  "rationale":  "<1-2 sentence value explanation>",
+  "accepted":   true,
+  "priority":   "high"|"medium"|"low",
+  "complexity": "XS"|"S"|"M"|"L"|"XL",
+  "techHint":   "<optional tech/library suggestion>"
+}]
+Propose 6–12 features. Prefer simplicity. High priority = MVP-critical. No gold-plating.`;
 
 export function buildFeatureUserPrompt(idea: string): string {
   return `Product idea:\n"""\n${idea}\n"""\n\nPropose the best MVP features as JSON.`;

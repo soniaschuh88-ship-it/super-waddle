@@ -2,7 +2,7 @@
 import { useState, useCallback } from 'react';
 import { Layers } from 'lucide-react';
 import { IdeaInput } from './IdeaInput';
-import { FeatureProposals } from './FeatureProposals';
+import { FeatureTable } from './FeatureTable';
 import { GenerationProgress } from './GenerationProgress';
 import { BackendSelector } from './BackendSelector';
 import { useAppState } from '@/context/AppContext';
@@ -40,7 +40,9 @@ export function WizardModal() {
       const now=new Date().toISOString(); const id=generateId();
       dispatch({type:'SET_ENGINE_STATUS',status:'generating'});
       const raw = await generateJson<FeatureProposal[]>(FEATURE_SYSTEM_PROMPT, buildFeatureUserPrompt(ideaText), backendConfig);
-      const features: FeatureProposal[] = raw ?? [{ id:'core', title:'Core Functionality', rationale:'The essential feature described.', accepted:true }];
+      const features: FeatureProposal[] = raw ?? [
+        { id:'core', title:'Core Functionality', rationale:'The essential feature described.', accepted:true, priority:'high', complexity:'M' },
+      ];
       const p = { id, idea_text:ideaText, proposed_features:features, generated_bundle:null, validation_results:null, created_at:now, updated_at:now };
       await createProject(p);
       dispatch({type:'SET_PROJECT',project:p});
@@ -115,7 +117,7 @@ export function WizardModal() {
                   <p className="text-sm text-muted">{state.engineStatus==='loading'?backendConfig.type==='webgpu'?`Loading model… ${state.engineProgress.progress}%`:`Connecting to ${backendConfig.type}…`:'Generating proposals…'}</p>
                   {state.engineStatus==='loading'&&backendConfig.type==='webgpu'&&<div className="w-48 h-1 rounded-full bg-border overflow-hidden"><div className="h-full bg-accent rounded-full transition-all" style={{width:`${state.engineProgress.progress}%`}}/></div>}
                 </div>
-              ) : <FeatureProposals features={features} onGenerate={handleGeneratePlan} isLoading={isLoading}/>
+              ) : <FeatureTable features={features} onGenerate={handleGeneratePlan} isLoading={isLoading}/>
             )}
             {step==='generating' && <GenerationProgress/>}
           </div>

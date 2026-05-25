@@ -3,29 +3,30 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server } from 'lucide-react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box } from 'lucide-react';
 import { AdminAuth, checkPassword } from './AdminAuth';
-import { OllamaManager } from './OllamaManager';
-import { WebLLMCache } from './WebLLMCache';
-import { SystemStats } from './SystemStats';
-import { AISettings } from './AISettings';
+import { OllamaManager }        from './OllamaManager';
+import { NodeLlamaCppManager }  from './NodeLlamaCppManager';
+import { WebLLMCache }          from './WebLLMCache';
+import { SystemStats }          from './SystemStats';
+import { AISettings }           from './AISettings';
 
 const SESSION_KEY = 'icadp_admin_unlocked';
 
-type Tab = 'stats' | 'ollama' | 'webllm' | 'settings';
+type Tab = 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
-  { id:'stats',    label:'System Stats',    icon:BarChart2 },
-  { id:'ollama',   label:'Ollama Manager',  icon:Server },
-  { id:'webllm',   label:'WebLLM Cache',    icon:HardDrive },
-  { id:'settings', label:'AI Settings',     icon:Settings },
+  { id:'stats',    label:'System Stats',       icon:BarChart2 },
+  { id:'ollama',   label:'Ollama Manager',     icon:Server    },
+  { id:'llamacpp', label:'node-llama-cpp',     icon:Box       },
+  { id:'webllm',   label:'WebLLM Cache',       icon:HardDrive },
+  { id:'settings', label:'AI Settings',        icon:Settings  },
 ];
 
 export function AdminApp() {
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
   const [tab, setTab]           = useState<Tab>('stats');
 
-  // Persist unlock across soft navigations within the same browser tab
   useEffect(() => {
     if (unlocked) sessionStorage.setItem(SESSION_KEY, '1');
     else sessionStorage.removeItem(SESSION_KEY);
@@ -36,7 +37,7 @@ export function AdminApp() {
 
   if (!unlocked) return <AdminAuth onUnlock={handleUnlock}/>;
 
-  const ActiveTab = TABS.find(t=>t.id===tab)!;
+  const ActiveTab = TABS.find(t => t.id === tab)!;
 
   return (
     <div className="min-h-screen bg-base text-text-primary flex flex-col">
@@ -51,11 +52,8 @@ export function AdminApp() {
             <span className="ml-2 text-[10px] text-accent font-mono tracking-widest">v3.0</span>
           </div>
         </div>
-
         <div className="flex items-center gap-3">
-          <a href="/" className="text-xs text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface transition-colors">
-            ← App
-          </a>
+          <a href="/" className="text-xs text-muted hover:text-text-primary px-2 py-1 rounded hover:bg-surface transition-colors">← App</a>
           <button onClick={handleLock} className="flex items-center gap-1.5 text-xs text-muted hover:text-error px-2 py-1 rounded hover:bg-surface transition-colors">
             <LogOut size={13}/>Lock
           </button>
@@ -68,11 +66,14 @@ export function AdminApp() {
           {TABS.map(t => {
             const Icon = t.icon;
             return (
-              <button key={t.id} onClick={()=>setTab(t.id)}
-                className={['flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-l-2 text-sm',
-                  t.id===tab ? 'bg-accent/10 border-accent text-accent font-medium' : 'border-transparent text-muted hover:bg-surface hover:text-text-primary'].join(' ')}>
-                <Icon size={15}/>
-                {t.label}
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={[
+                  'flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-l-2 text-sm',
+                  t.id === tab
+                    ? 'bg-accent/10 border-accent text-accent font-medium'
+                    : 'border-transparent text-muted hover:bg-surface hover:text-text-primary',
+                ].join(' ')}>
+                <Icon size={15}/>{t.label}
               </button>
             );
           })}
@@ -85,11 +86,11 @@ export function AdminApp() {
               <ActiveTab.icon size={18} className="text-accent"/>
               <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
             </div>
-
-            {tab==='stats'    && <SystemStats/>}
-            {tab==='ollama'   && <OllamaManager/>}
-            {tab==='webllm'   && <WebLLMCache/>}
-            {tab==='settings' && <AISettings/>}
+            {tab === 'stats'    && <SystemStats/>}
+            {tab === 'ollama'   && <OllamaManager/>}
+            {tab === 'llamacpp' && <NodeLlamaCppManager/>}
+            {tab === 'webllm'   && <WebLLMCache/>}
+            {tab === 'settings' && <AISettings/>}
           </div>
         </main>
       </div>
