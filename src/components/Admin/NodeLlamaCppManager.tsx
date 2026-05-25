@@ -6,9 +6,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, Trash2, CheckCircle, Loader2, AlertCircle, Cpu, HardDrive, Activity } from 'lucide-react';
 import {
   llamaCppListModels, llamaCppGetGpu, llamaCppGetHealth, llamaCppSwapModel,
-  llamaCppPullModel, llamaCppDeleteModel, LLAMA_CPP_RECOMMENDED,
+  llamaCppPullModel, llamaCppDeleteModel, LLAMA_CPP_RECOMMENDED, filterByMaxSize,
   type LlamaCppModel,
 } from '@/lib/llm-client';
+
+const MAX_SIZE_B = 1.0; // default max model size in admin recommendations
 
 const DEFAULT_URL = localStorage.getItem('icadp_llamacpp_url') ?? 'http://localhost:8001';
 
@@ -145,7 +147,7 @@ export function NodeLlamaCppManager() {
           GPU auto-detected (Metal / CUDA / Vulkan / CPU).
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-          {LLAMA_CPP_RECOMMENDED.map(m=>{
+          {filterByMaxSize(LLAMA_CPP_RECOMMENDED, MAX_SIZE_B).concat(LLAMA_CPP_RECOMMENDED.filter(m=>m.sizeB>MAX_SIZE_B)).map(m=>{
             const ps = pulling[m.uri];
             return (
               <div key={m.uri} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-panel">

@@ -23,24 +23,26 @@ export interface ModelOption {
   id:          string;
   label:       string;
   sizeMb:      number;
+  /** Approximate parameter count in billions (used for size filtering). */
+  sizeB:       number;
   description: string;
   family:      string;
 }
 
 /** Models available in this version of web-llm. */
 export const MODEL_OPTIONS: ModelOption[] = [
-  { id:'SmolLM2-360M-Instruct-q4f16_1-MLC',  label:'SmolLM 2 – 360M',             sizeMb:210,  family:'SmolLM',  description:'Fastest; very short plans.' },
-  { id:'Qwen2.5-0.5B-Instruct-q4f16_1-MLC',  label:'Qwen 2.5 – 0.5B',             sizeMb:390,  family:'Qwen',    description:'Tiny Qwen, great on low-end GPUs.' },
-  { id:'SmolLM2-1.7B-Instruct-q4f16_1-MLC',  label:'SmolLM 2 – 1.7B',             sizeMb:1000, family:'SmolLM',  description:'Good balance for small GPUs.' },
-  { id:'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',  label:'Qwen 2.5 – 1.5B ★',          sizeMb:950,  family:'Qwen',    description:'Recommended — speed & quality.' },
-  { id:'Llama-3.2-1B-Instruct-q4f32_1-MLC',  label:'Llama 3.2 – 1B (Meta)',       sizeMb:700,  family:'Llama',   description:'Meta 1B, fast.' },
-  { id:'Qwen2.5-3B-Instruct-q4f16_1-MLC',    label:'Qwen 2.5 – 3B',               sizeMb:1800, family:'Qwen',    description:'Better plans, ~2s/token.' },
-  { id:'Llama-3.2-3B-Instruct-q4f16_1-MLC',  label:'Llama 3.2 – 3B (Meta)',       sizeMb:1900, family:'Llama',   description:'Meta 3B.' },
-  { id:'Phi-3.5-mini-instruct-q4f16_1-MLC',  label:'Phi 3.5 Mini (Microsoft)',     sizeMb:2200, family:'Phi',     description:'Strong reasoning.' },
-  { id:'Qwen3-1.7B-q4f16_1-MLC',             label:'Qwen 3 – 1.7B (latest)',       sizeMb:1100, family:'Qwen3',   description:'Newest Qwen generation, thinking mode.' },
+  { id:'SmolLM2-360M-Instruct-q4f16_1-MLC',  label:'SmolLM 2 – 360M',         sizeMb:210,  sizeB:0.36, family:'SmolLM', description:'Fastest; very short plans.' },
+  { id:'Qwen2.5-0.5B-Instruct-q4f16_1-MLC',  label:'Qwen 2.5 – 0.5B',         sizeMb:390,  sizeB:0.5,  family:'Qwen',   description:'Tiny Qwen, great on low-end GPUs.' },
+  { id:'Llama-3.2-1B-Instruct-q4f32_1-MLC',  label:'Llama 3.2 – 1B (Meta) ★', sizeMb:700,  sizeB:1.0,  family:'Llama',  description:'Recommended 1B — fast & good quality.' },
+  { id:'SmolLM2-1.7B-Instruct-q4f16_1-MLC',  label:'SmolLM 2 – 1.7B',         sizeMb:1000, sizeB:1.7,  family:'SmolLM', description:'Good balance for small GPUs.' },
+  { id:'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',  label:'Qwen 2.5 – 1.5B',         sizeMb:950,  sizeB:1.5,  family:'Qwen',   description:'Fast & good quality.' },
+  { id:'Qwen3-1.7B-q4f16_1-MLC',             label:'Qwen 3 – 1.7B (latest)',   sizeMb:1100, sizeB:1.7,  family:'Qwen3',  description:'Newest Qwen, thinking mode.' },
+  { id:'Qwen2.5-3B-Instruct-q4f16_1-MLC',    label:'Qwen 2.5 – 3B',           sizeMb:1800, sizeB:3.0,  family:'Qwen',   description:'Better plans, slower.' },
+  { id:'Llama-3.2-3B-Instruct-q4f16_1-MLC',  label:'Llama 3.2 – 3B (Meta)',   sizeMb:1900, sizeB:3.0,  family:'Llama',  description:'Meta 3B.' },
+  { id:'Phi-3.5-mini-instruct-q4f16_1-MLC',  label:'Phi 3.5 Mini (Microsoft)', sizeMb:2200, sizeB:3.8,  family:'Phi',    description:'Strong reasoning.' },
 ];
 
-export const DEFAULT_MODEL_ID = MODEL_OPTIONS[3].id; // Qwen 2.5 1.5B
+export const DEFAULT_MODEL_ID = MODEL_OPTIONS[2].id; // Llama 3.2 1B
 
 // ── Engine singleton ──────────────────────────────────────────────────────────
 

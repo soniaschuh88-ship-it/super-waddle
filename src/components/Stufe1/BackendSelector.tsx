@@ -6,7 +6,7 @@ import { useState, useCallback } from 'react';
 import { Cpu, Server, HardDrive, ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { useAppState } from '@/context/AppContext';
 import { MODEL_OPTIONS } from '@/lib/webllm';
-import { pingRestBackend, OLLAMA_POPULAR_MODELS, LLAMA_CPP_RECOMMENDED } from '@/lib/llm-client';
+import { pingRestBackend, OLLAMA_POPULAR_MODELS, LLAMA_CPP_RECOMMENDED, filterByMaxSize } from '@/lib/llm-client';
 import type { BackendType, BackendConfig } from '@/types';
 
 interface Def { type: BackendType; label: string; tagline: string; icon: React.FC<{size?:number;className?:string}>; defaultUrl: string; defaultModel: string; }
@@ -26,6 +26,7 @@ export function BackendSelector() {
   const [draftUrl, setDraftUrl]     = useState(backendConfig.serverUrl);
   const [draftModel, setDraftModel] = useState(backendConfig.modelId);
   const [ping, setPing]             = useState<Ping>('idle');
+  const [onlySmall, setOnlySmall]   = useState(true); // ≤1B filter on by default
 
   const commit = useCallback((p: Partial<BackendConfig>) => {
     dispatch({ type:'SET_BACKEND', config:{ type:p.type??backendConfig.type, serverUrl:p.serverUrl??draftUrl, modelId:p.modelId??draftModel } });
@@ -63,6 +64,20 @@ export function BackendSelector() {
 
       {expanded && (
         <div className="border-t border-border px-4 py-3 flex flex-col gap-3">
+          {/* Size filter toggle */}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setOnlySmall(p => !p)}
+              className={['flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors',
+                onlySmall
+                  ? 'bg-accent/15 border-accent/40 text-accent'
+                  : 'bg-base border-border text-muted hover:border-accent/30'].join(' ')}>
+              {onlySmall ? '≤ 1B models' : 'All sizes'}
+            </button>
+            <span className="text-[11px] text-muted/50">
+              {onlySmall ? 'Showing compact models only' : 'Showing all model sizes'}
+            </span>
+          </div>
+
           {/* Type pills */}
           <div className="flex gap-2 flex-wrap">
             {DEFS.map(d=>{
@@ -83,7 +98,7 @@ export function BackendSelector() {
               <label className="text-[10px] font-semibold text-muted uppercase tracking-wider">Model ({MODEL_OPTIONS.length} available)</label>
               <select value={draftModel} onChange={e=>{setDraftModel(e.target.value);commit({modelId:e.target.value});}}
                 className="bg-base border border-border text-text-primary text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-accent/60">
-                {MODEL_OPTIONS.map(m=><option key={m.id} value={m.id}>{m.label} (~{m.sizeMb} MB)</option>)}
+                {(onlySmall ? filterByMaxSize(MODEL_OPTIONS, 1.0) : MODEL_OPTIONS).map(m=><option key={m.id} value={m.id}>{m.label} (~{m.sizeMb} MB)</option>)}
               </select>
               <p className="text-[11px] text-muted/60">{MODEL_OPTIONS.find(m=>m.id===draftModel)?.description}</p>
             </div>
@@ -94,7 +109,7 @@ export function BackendSelector() {
             <div className="flex flex-col gap-2">
               <label className="text-[10px] font-semibold text-muted uppercase tracking-wider">Model</label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {OLLAMA_POPULAR_MODELS.map(m=>(
+                {(onlySmall ? filterByMaxSize(OLLAMA_POPULAR_MODELS, 1.0) : OLLAMA_POPULAR_MODELS).map(m=>(
                   <button key={m.name} onClick={()=>{setDraftModel(m.name);commit({modelId:m.name});}}
                     className={['px-2 py-1.5 rounded-lg text-[11px] font-mono border transition-colors text-left',
                       draftModel===m.name?'bg-accent/15 border-accent/40 text-accent':'bg-base border-border text-muted hover:border-accent/30'].join(' ')}>
@@ -115,7 +130,7 @@ export function BackendSelector() {
                 placeholder="Leave blank for auto, or: /path/to/model.gguf"
                 className="bg-base border border-border text-text-primary text-xs font-mono rounded-lg px-3 py-1.5 focus:outline-none focus:border-accent/60 placeholder:text-muted/40"/>
               <div className="flex flex-wrap gap-1.5">
-                {LLAMA_CPP_RECOMMENDED.map(m=>(
+                {(onlySmall ? filterByMaxSize(LLAMA_CPP_RECOMMENDED, 1.0) : LLAMA_CPP_RECOMMENDED).map(m=>(
                   <button key={m.uri} onClick={()=>{setDraftModel(m.uri);commit({modelId:m.uri});}}
                     title={`${m.description}\nURI: ${m.uri}`}
                     className={['px-2 py-1 rounded text-[11px] border transition-colors',

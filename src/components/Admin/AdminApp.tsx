@@ -3,19 +3,21 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box } from 'lucide-react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power } from 'lucide-react';
 import { AdminAuth, checkPassword } from './AdminAuth';
 import { OllamaManager }        from './OllamaManager';
 import { NodeLlamaCppManager }  from './NodeLlamaCppManager';
+import { ServerManager }        from './ServerManager';
 import { WebLLMCache }          from './WebLLMCache';
 import { SystemStats }          from './SystemStats';
 import { AISettings }           from './AISettings';
 
 const SESSION_KEY = 'icadp_admin_unlocked';
 
-type Tab = 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+type Tab = 'servers' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
+  { id:'servers',  label:'Server Manager',     icon:Power     },
   { id:'stats',    label:'System Stats',       icon:BarChart2 },
   { id:'ollama',   label:'Ollama Manager',     icon:Server    },
   { id:'llamacpp', label:'node-llama-cpp',     icon:Box       },
@@ -25,7 +27,7 @@ const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:st
 
 export function AdminApp() {
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
-  const [tab, setTab]           = useState<Tab>('stats');
+  const [tab, setTab]           = useState<Tab>('servers');
 
   useEffect(() => {
     if (unlocked) sessionStorage.setItem(SESSION_KEY, '1');
@@ -86,6 +88,7 @@ export function AdminApp() {
               <ActiveTab.icon size={18} className="text-accent"/>
               <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
             </div>
+            {tab === 'servers'  && <ServerManager/>}
             {tab === 'stats'    && <SystemStats/>}
             {tab === 'ollama'   && <OllamaManager/>}
             {tab === 'llamacpp' && <NodeLlamaCppManager/>}

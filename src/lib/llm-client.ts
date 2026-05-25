@@ -97,16 +97,23 @@ export async function ollamaDeleteModel(base: string, name: string): Promise<voi
   if (!r.ok) throw new Error(`Delete failed: ${r.status}`);
 }
 
+/** sizeB: approximate parameter count in billions. */
 export const OLLAMA_POPULAR_MODELS = [
-  { name: 'qwen2.5:1.5b',  label: 'Qwen 2.5 1.5B',  description: 'Fast, good quality' },
-  { name: 'qwen2.5:3b',    label: 'Qwen 2.5 3B',    description: 'Better quality' },
-  { name: 'llama3.2:1b',   label: 'Llama 3.2 1B',   description: 'Meta, very fast' },
-  { name: 'llama3.2:3b',   label: 'Llama 3.2 3B',   description: 'Meta, balanced' },
-  { name: 'mistral:7b',    label: 'Mistral 7B',      description: 'Strong reasoning' },
-  { name: 'codellama:7b',  label: 'CodeLlama 7B',   description: 'Code-focused' },
-  { name: 'phi3.5:mini',   label: 'Phi 3.5 Mini',    description: 'Microsoft, efficient' },
-  { name: 'gemma2:2b',     label: 'Gemma 2 2B',     description: 'Google, compact' },
+  { name:'qwen2.5:0.5b', label:'Qwen 2.5 0.5B', description:'Tiny, very fast',            sizeB:0.5  },
+  { name:'llama3.2:1b',  label:'Llama 3.2 1B',  description:'Meta 1B, fast',               sizeB:1.0  },
+  { name:'qwen2.5:1.5b', label:'Qwen 2.5 1.5B', description:'Fast, good quality',          sizeB:1.5  },
+  { name:'gemma2:2b',    label:'Gemma 2 2B',    description:'Google 2B, efficient',         sizeB:2.0  },
+  { name:'llama3.2:3b',  label:'Llama 3.2 3B',  description:'Meta 3B, balanced',           sizeB:3.0  },
+  { name:'qwen2.5:3b',   label:'Qwen 2.5 3B',   description:'Better quality',              sizeB:3.0  },
+  { name:'phi3.5:mini',  label:'Phi 3.5 Mini',  description:'Microsoft 3.8B, efficient',   sizeB:3.8  },
+  { name:'mistral:7b',   label:'Mistral 7B',    description:'Strong reasoning',            sizeB:7.0  },
+  { name:'codellama:7b', label:'CodeLlama 7B',  description:'Code-focused',               sizeB:7.0  },
 ];
+
+/** Filter models to those with sizeB ≤ maxB. */
+export function filterByMaxSize<T extends { sizeB: number }>(models: T[], maxB: number): T[] {
+  return models.filter(m => m.sizeB <= maxB);
+}
 
 // ── node-llama-cpp server APIs ────────────────────────────────────────────────
 
@@ -182,15 +189,89 @@ export async function llamaCppDeleteModel(base: string, filename: string): Promi
   if (!r.ok) throw new Error(`Delete failed: ${r.status}`);
 }
 
-// Recommended models for node-llama-cpp (HuggingFace URIs)
+/** Recommended GGUF models — sizeB is approximate parameter count. */
 export const LLAMA_CPP_RECOMMENDED = [
-  { uri: 'hf:Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M',              label: 'Qwen 2.5 1.5B Q4', description: '~1 GB · Fast & good quality' },
-  { uri: 'hf:Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M',                label: 'Qwen 2.5 3B Q4',   description: '~2 GB · Better quality' },
-  { uri: 'hf:bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M',         label: 'Llama 3.2 3B',      description: '~2 GB · Meta model' },
-  { uri: 'hf:bartowski/Phi-3.5-mini-instruct-GGUF:Q4_K_M',         label: 'Phi 3.5 Mini',      description: '~2.4 GB · Microsoft' },
-  { uri: 'hf:TheBloke/Mistral-7B-Instruct-v0.2-GGUF:Q4_K_M',       label: 'Mistral 7B',        description: '~4.4 GB · High quality' },
-  { uri: 'hf:TheBloke/CodeLlama-7B-Instruct-GGUF:Q4_K_M',          label: 'CodeLlama 7B',      description: '~4.1 GB · Code-focused' },
+  { uri:'hf:Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M',              label:'Qwen 2.5 0.5B', description:'~350 MB · Tiny & fast',            sizeB:0.5 },
+  { uri:'hf:bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M',         label:'Llama 3.2 1B',  description:'~650 MB · Meta 1B',                sizeB:1.0 },
+  { uri:'hf:HuggingFaceTB/smollm2-1.7b-instruct-GGUF:Q4_K_M',     label:'SmolLM 2 1.7B', description:'~1 GB · HuggingFace compact',      sizeB:1.7 },
+  { uri:'hf:Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M',              label:'Qwen 2.5 1.5B', description:'~950 MB · Fast & good quality',    sizeB:1.5 },
+  { uri:'hf:Qwen/Qwen2.5-3B-Instruct-GGUF:Q4_K_M',                label:'Qwen 2.5 3B',   description:'~2 GB · Better quality',           sizeB:3.0 },
+  { uri:'hf:bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M',         label:'Llama 3.2 3B',  description:'~2 GB · Meta 3B',                  sizeB:3.0 },
+  { uri:'hf:bartowski/Phi-3.5-mini-instruct-GGUF:Q4_K_M',         label:'Phi 3.5 Mini',  description:'~2.4 GB · Microsoft',             sizeB:3.8 },
+  { uri:'hf:TheBloke/Mistral-7B-Instruct-v0.2-GGUF:Q4_K_M',       label:'Mistral 7B',    description:'~4.4 GB · High quality',           sizeB:7.0 },
+  { uri:'hf:TheBloke/CodeLlama-7B-Instruct-GGUF:Q4_K_M',          label:'CodeLlama 7B',  description:'~4.1 GB · Code-focused',           sizeB:7.0 },
 ];
+
+// ── Process manager APIs (server/manager.js) ─────────────────────────────────
+
+export interface ManagerServerStatus {
+  name:      string;
+  pid:       number | null;
+  running:   boolean;
+  reachable: boolean;
+  port:      number;
+}
+
+export interface ManagerStatus {
+  llama:  ManagerServerStatus;
+  ollama: ManagerServerStatus;
+}
+
+export async function managerGetStatus(managerUrl: string): Promise<ManagerStatus | null> {
+  try {
+    const r = await fetch(`${managerUrl}/status`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return null;
+    return r.json() as Promise<ManagerStatus>;
+  } catch { return null; }
+}
+
+export async function managerStartLlama(
+  managerUrl: string,
+  opts: { modelPath?: string; nCtx?: number; gpuLayers?: number } = {},
+): Promise<{ pid?: number; error?: string }> {
+  const r = await fetch(`${managerUrl}/llama/start`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+  return r.json();
+}
+
+export async function managerStopLlama(managerUrl: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await fetch(`${managerUrl}/llama/stop`, { method: 'POST' });
+  return r.json();
+}
+
+export async function managerStartOllama(managerUrl: string): Promise<{ pid?: number; error?: string }> {
+  const r = await fetch(`${managerUrl}/ollama/start`, { method: 'POST' });
+  return r.json();
+}
+
+export async function managerStopOllama(managerUrl: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await fetch(`${managerUrl}/ollama/stop`, { method: 'POST' });
+  return r.json();
+}
+
+export async function managerGetLogs(managerUrl: string, server: 'llama' | 'ollama'): Promise<string[]> {
+  try {
+    const r = await fetch(`${managerUrl}/logs/${server}`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return [];
+    const d = await r.json() as { lines: string[] };
+    return d.lines ?? [];
+  } catch { return []; }
+}
+
+export interface SystemdUnits {
+  llama:  { unitFile: string; content: string; commands: string[] };
+  ollama: { unitFile: string; installCommand: string; commands: string[] };
+}
+
+export async function managerGetSystemdUnits(managerUrl: string): Promise<SystemdUnits | null> {
+  try {
+    const r = await fetch(`${managerUrl}/systemd-units`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return null;
+    return r.json() as Promise<SystemdUnits>;
+  } catch { return null; }
+}
 
 // ── Unified public API ────────────────────────────────────────────────────────
 
