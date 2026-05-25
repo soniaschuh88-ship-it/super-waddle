@@ -7,18 +7,16 @@ export default defineConfig({
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   worker: { format: 'es' },
   optimizeDeps: { exclude: ['@mlc-ai/web-llm'] },
-  build: { target: 'esnext' },
-  server: {
-    allowedHosts: true,
-    headers: {
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Opener-Policy':   'same-origin',
+  build: {
+    target: 'esnext',
+    // Keep COEP/COOP in the production build for SharedArrayBuffer support
+    rollupOptions: {
+      output: { assetFileNames: 'assets/[name]-[hash][extname]' },
     },
   },
-  preview: {
-    headers: {
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Opener-Policy':   'same-origin',
-    },
+  server: {
+    allowedHosts: true,
+    // No COEP/COOP in dev — these headers break HTTP/2 reverse proxies (tunnels).
+    // WebGPU inference works without them; only WASM multi-threading needs them.
   },
 });
