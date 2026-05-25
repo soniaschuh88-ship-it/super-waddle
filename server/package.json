@@ -5,11 +5,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start":      "node index.js",
-    "dev":        "node --watch index.js",
-    "gpu-info":   "npx --no node-llama-cpp inspect gpu",
-    "pull":       "npx --no node-llama-cpp pull --dir ./models",
-    "chat":       "npx --no node-llama-cpp chat"
+    "start":        "node serve.js",
+    "inference":    "node index.js",
+    "dev":          "node --watch serve.js",
+    "gpu-info":     "npx --no node-llama-cpp inspect gpu",
+    "pull":         "npx --no node-llama-cpp pull --dir ./models",
+    "chat":         "npx --no node-llama-cpp chat",
+    "postinstall":  "mkdir -p models"
   },
   "dependencies": {
     "node-llama-cpp": "^3.0.0",

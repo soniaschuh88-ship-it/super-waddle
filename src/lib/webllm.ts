@@ -17,6 +17,24 @@ import {
 } from '@mlc-ai/web-llm';
 import type { EngineProgress } from '@/types';
 
+// ── Re-export types used by callers ───────────────────────────────────────────
+
+export interface ChatTool {
+  type: 'function';
+  function: {
+    name:        string;
+    description: string;
+    parameters:  Record<string, unknown>; // JSON Schema object
+  };
+}
+
+export interface StreamingOptions {
+  temperature?: number;
+  maxTokens?:   number;
+  seed?:        number;
+  tools?:       ChatTool[];
+}
+
 // ── Model catalogue ───────────────────────────────────────────────────────────
 
 export interface ModelOption {
@@ -185,6 +203,177 @@ export async function generateStreaming(
     }
   }
   return full;
+}
+
+// ── Text completion (no chat template) ───────────────────────────────────────
+
+/**
+ * Raw text completion — uses `engine.completions.create()`, no chat template.
+ * Good for fill-in, autocomplete, and code generation tasks.
+ *
+ * @example
+ *   const result = await generateTextCompletion('function add(a, b) {', { maxTokens: 64 });
+ */
+export async function generateTextCompletion(
+  prompt:    string,
+  opts:      { maxTokens?: number; temperature?: number; seed?: number } = {},
+  onChunk?:  (chunk: string) => void,
+): Promise<string> {
+  const engine = requireEngine();
+
+  if (onChunk) {
+    const stream = await engine.completions.create({
+      prompt,
+      stream:      true,
+      max_tokens:  opts.maxTokens  ?? 256,
+      temperature: opts.temperature ?? 0.4,
+      ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+    });
+    let full = '';
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.text ?? '';
+      if (text) { full += text; onChunk(text); }
+    }
+    return full;
+  }
+
+  const resp = await engine.completions.create({
+    prompt,
+    stream:      false,
+    max_tokens:  opts.maxTokens  ?? 256,
+    temperature: opts.temperature ?? 0.4,
+    ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+  });
+  return resp.choices[0]?.text ?? '';
+}
+
+// ── Embeddings ────────────────────────────────────────────────────────────────
+
+/**
+ * Create embedding vectors for one or more texts.
+ * Uses `engine.embeddings.create()` from web-llm.
+ *
+ * @returns Array of float32 arrays, one per input text.
+ */
+export async function createEmbeddings(texts: string[]): Promise<number[][]> {
+  const engine = requireEngine();
+  const resp   = await engine.embeddings.create({
+    input: texts,
+    model: _loadedModelId ?? '',
+  });
+  return resp.data
+    .sort((a, b) => a.index - b.index)
+    .map(e => e.embedding as number[]);
+}
+
+/**
+ * Compute cosine similarity between two texts.
+ * Returns a value in [0, 1] where 1 = identical meaning.
+ */
+export async function computeSemanticSimilarity(text1: string, text2: string): Promise<number> {
+  const [v1, v2] = await createEmbeddings([text1, text2]);
+  return cosineSimilarity(v1, v2);
+}
+
+/** Cosine similarity between two equal-length vectors. */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0, magA = 0, magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot  += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+// ── Function calling ──────────────────────────────────────────────────────────
+
+export interface ToolCallResult {
+  name:       string;
+  arguments:  Record<string, unknown>;
+  /** Result returned by the handler. */
+  result:     unknown;
+}
+
+/**
+ * Chat completion with tool/function calling.
+ *
+ * Handlers are provided as a map { [toolName]: (args) => any }.
+ * When the model calls a function, the handler runs and the result is fed
+ * back to the model so it can incorporate it in its final answer.
+ *
+ * @returns { answer, toolCalls } — final text response plus log of all calls.
+ */
+export async function generateWithTools(
+  messages:  Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  tools:     ChatTool[],
+  handlers:  Record<string, (args: Record<string, unknown>) => unknown | Promise<unknown>>,
+  opts:      { temperature?: number; maxTokens?: number; seed?: number } = {},
+): Promise<{ answer: string; toolCalls: ToolCallResult[] }> {
+  const engine    = requireEngine();
+  const toolCalls: ToolCallResult[] = [];
+  const allMessages = [...messages];
+
+  // First pass: get the model's initial response (may include tool calls)
+  const firstResp = await engine.chat.completions.create({
+    stream:      false,
+    messages:    allMessages as Parameters<typeof engine.chat.completions.create>[0]['messages'],
+    tools:       tools as Parameters<typeof engine.chat.completions.create>[0]['tools'],
+    temperature: opts.temperature ?? 0.3,
+    max_tokens:  opts.maxTokens   ?? 2048,
+    ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+  });
+
+  const firstChoice = firstResp.choices[0];
+  const finishReason = firstChoice?.finish_reason;
+
+  // If the model issued tool calls, execute them and continue
+  if (finishReason === 'tool_calls' && firstChoice?.message?.tool_calls) {
+    allMessages.push({ role: 'assistant', content: firstChoice.message.content ?? '' });
+
+    for (const tc of firstChoice.message.tool_calls) {
+      const fn      = tc.function;
+      const handler = handlers[fn.name];
+      let result: unknown = `Tool "${fn.name}" not found`;
+
+      if (handler) {
+        try {
+          const args = JSON.parse(fn.arguments ?? '{}') as Record<string, unknown>;
+          result     = await handler(args);
+          toolCalls.push({ name: fn.name, arguments: args, result });
+        } catch (e) {
+          result = `Error: ${e instanceof Error ? e.message : 'unknown'}`;
+        }
+      }
+
+      // Append tool result back to the conversation
+      allMessages.push({
+        role:        'tool' as unknown as 'user', // web-llm may support 'tool' role
+        content:     typeof result === 'string' ? result : JSON.stringify(result),
+      });
+    }
+
+    // Second pass: model incorporates tool results into final answer
+    const finalResp = await engine.chat.completions.create({
+      stream:      false,
+      messages:    allMessages as Parameters<typeof engine.chat.completions.create>[0]['messages'],
+      temperature: opts.temperature ?? 0.3,
+      max_tokens:  opts.maxTokens   ?? 2048,
+      ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+    });
+
+    return {
+      answer:    finalResp.choices[0]?.message?.content ?? '',
+      toolCalls,
+    };
+  }
+
+  return {
+    answer:    firstChoice?.message?.content ?? '',
+    toolCalls,
+  };
 }
 
 // ── Cache management ──────────────────────────────────────────────────────────

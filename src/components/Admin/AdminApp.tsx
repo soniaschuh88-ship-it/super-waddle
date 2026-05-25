@@ -3,29 +3,35 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power } from 'lucide-react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download } from 'lucide-react';
 import { AdminAuth, checkPassword } from './AdminAuth';
-import { OllamaManager }        from './OllamaManager';
-import { NodeLlamaCppManager }  from './NodeLlamaCppManager';
-import { ServerManager }        from './ServerManager';
-import { WebLLMCache }          from './WebLLMCache';
-import { SystemStats }          from './SystemStats';
-import { AISettings }           from './AISettings';
+import { OllamaManager }       from './OllamaManager';
+import { NodeLlamaCppManager } from './NodeLlamaCppManager';
+import { ServerManager }       from './ServerManager';
+import { WebLLMCache }         from './WebLLMCache';
+import { SystemStats }         from './SystemStats';
+import { AISettings }          from './AISettings';
+import { EmbeddingsLab }       from './EmbeddingsLab';
+import { ModelDownloadPanel }  from './ModelDownloadPanel';
+import { useAppState }         from '@/context/AppContext';
 
 const SESSION_KEY = 'icadp_admin_unlocked';
 
-type Tab = 'servers' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+type Tab = 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
-  { id:'servers',  label:'Server Manager',     icon:Power     },
-  { id:'stats',    label:'System Stats',       icon:BarChart2 },
-  { id:'ollama',   label:'Ollama Manager',     icon:Server    },
-  { id:'llamacpp', label:'node-llama-cpp',     icon:Box       },
-  { id:'webllm',   label:'WebLLM Cache',       icon:HardDrive },
-  { id:'settings', label:'AI Settings',        icon:Settings  },
+  { id:'servers',    label:'Server Manager',    icon:Power        },
+  { id:'models',     label:'Download Models',   icon:Download     },
+  { id:'embeddings', label:'Embeddings Lab',    icon:FlaskConical },
+  { id:'stats',      label:'System Stats',      icon:BarChart2    },
+  { id:'ollama',     label:'Ollama Manager',    icon:Server       },
+  { id:'llamacpp',   label:'node-llama-cpp',    icon:Box          },
+  { id:'webllm',     label:'WebLLM Cache',      icon:HardDrive    },
+  { id:'settings',   label:'AI Settings',       icon:Settings     },
 ];
 
 export function AdminApp() {
+  const { state } = useAppState();
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
   const [tab, setTab]           = useState<Tab>('servers');
 
@@ -88,12 +94,20 @@ export function AdminApp() {
               <ActiveTab.icon size={18} className="text-accent"/>
               <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
             </div>
-            {tab === 'servers'  && <ServerManager/>}
-            {tab === 'stats'    && <SystemStats/>}
-            {tab === 'ollama'   && <OllamaManager/>}
-            {tab === 'llamacpp' && <NodeLlamaCppManager/>}
-            {tab === 'webllm'   && <WebLLMCache/>}
-            {tab === 'settings' && <AISettings/>}
+            {tab === 'servers'    && <ServerManager/>}
+            {tab === 'models'     && (
+              <ModelDownloadPanel
+                serverUrl={state.backendConfig.type === 'llama-cpp' ? state.backendConfig.serverUrl : 'http://localhost:8001'}
+              />
+            )}
+            {tab === 'embeddings' && (
+              <EmbeddingsLab backendConfig={state.backendConfig}/>
+            )}
+            {tab === 'stats'      && <SystemStats/>}
+            {tab === 'ollama'     && <OllamaManager/>}
+            {tab === 'llamacpp'   && <NodeLlamaCppManager/>}
+            {tab === 'webllm'     && <WebLLMCache/>}
+            {tab === 'settings'   && <AISettings/>}
           </div>
         </main>
       </div>
