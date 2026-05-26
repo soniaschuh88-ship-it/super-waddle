@@ -49,7 +49,7 @@
     color: var(--c-text);
     font-family: 'Space Grotesk', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
-    overflow: hidden;
+    /* DO NOT set overflow:hidden on body — kills mobile scroll */
 
     /* Layered ambient background */
     background-image:
@@ -233,8 +233,8 @@
 /* Input fields — atlantis style */
 input, textarea, select {
   background-color: rgba(3,8,16,0.8) !important;
-  color: var(--c-text) !important;
-  border-color: var(--c-border) !important;
+  color: #e8f4f8 !important;
+  border-color: rgba(13,42,64,0.9) !important;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 input:focus, textarea:focus, select:focus {
@@ -242,12 +242,17 @@ input:focus, textarea:focus, select:focus {
   border-color: rgba(0,229,255,0.4) !important;
   box-shadow: 0 0 0 1px rgba(0,229,255,0.15), 0 0 12px rgba(0,229,255,0.1) !important;
 }
-input::placeholder { color: rgba(74,104,128,0.5); }
+input::placeholder { color: rgba(74,104,128,0.6); }
+select option { background-color: #091628; color: #e8f4f8; }
+
+/* Ensure links are readable */
+a { color: inherit; }
 
 /* Button base */
 button {
   transition: all 0.18s cubic-bezier(0.16,1,0.3,1);
 }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
 
 /* Accent button */
 .bg-accent {
@@ -260,12 +265,40 @@ button {
   filter: brightness(1.08);
 }
 
-/* Tabs — rune-styled active indicator */
-.tab-active {
-  color: var(--c-accent);
-  border-bottom: 2px solid var(--c-accent);
-  text-shadow: 0 0 8px rgba(0,229,255,0.5);
+/* Readable body text — ensure minimum contrast */
+p, span, li {
+  line-height: 1.6;
 }
+
+/* Muted text — minimum 4.5:1 contrast ratio target */
+.text-muted {
+  color: #6b8ca8 !important;   /* raised from pure #4a6880 for better readability */
+}
+
+/* Very small text — slightly raised weight for legibility */
+.text-\[10px\], .text-\[11px\] {
+  font-weight: 500;
+}
+.text-\[9px\], .text-\[10px\] {
+  letter-spacing: 0.02em;
+}
+
+/* Orbitron display font — only for logo/hero, NOT for UI labels */
+.font-display {
+  font-family: 'Orbitron', 'Space Grotesk', sans-serif;
+  letter-spacing: 0.05em;
+}
+
+/* Code / mono — slightly brighter */
+code, .font-mono {
+  color: #b0d4e8;
+}
+
+/* Scrollable areas */
+.overflow-y-auto::-webkit-scrollbar         { width: 4px; }
+.overflow-y-auto::-webkit-scrollbar-track   { background: transparent; }
+.overflow-y-auto::-webkit-scrollbar-thumb   { background: rgba(0,229,255,0.15); border-radius: 2px; }
+.overflow-y-auto::-webkit-scrollbar-thumb:hover { background: rgba(0,229,255,0.3); }
 
 /* Progress bars */
 .progress-bar {
@@ -282,3 +315,22 @@ button {
   animation: progressShimmer 1.6s ease-in-out infinite;
   left: -40%;
 }
+
+/* Mobile: prevent horizontal overflow */
+@media (max-width: 640px) {
+  .max-w-5xl, .max-w-4xl, .max-w-3xl {
+    max-width: 100%;
+  }
+  /* Reduce padding on mobile */
+  .px-6 { padding-left: 1rem; padding-right: 1rem; }
+  .px-8 { padding-left: 1rem; padding-right: 1rem; }
+}
+
+/* Tablet tweaks */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .max-w-5xl, .max-w-4xl { max-width: 100%; }
+}
+
+/* Ensure text is always visible over dark backgrounds */
+.text-text-primary { color: #e8f4f8 !important; }
+.text-accent       { color: #00e5ff !important; }

@@ -439,18 +439,21 @@ export function BackendSelector() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
-                  {cloudProviders.filter(p => p.hasKey || p.anonAccess).map(p => {
+                  {cloudProviders.map(p => {
                     const isSelected = isCloud && backendConfig.modelId?.startsWith(p.id + '/');
+                    const accessible = p.hasKey || p.anonAccess;
                     const col = TIER_COLOR[p.tier] ?? '#4a6880';
                     return (
                       <button
                         key={p.id}
                         onClick={() => setCloudProvider(p.id)}
+                        title={!accessible ? `Add ${p.name} API key in My Keys or Admin → Global Providers` : undefined}
                         className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all"
                         style={{
                           background: isSelected ? `${col}10` : 'rgba(3,8,16,0.8)',
                           borderColor: isSelected ? `${col}35` : 'rgba(13,42,64,0.6)',
                           boxShadow: isSelected ? `0 0 8px ${col}20` : undefined,
+                          opacity: accessible ? 1 : 0.5,
                         }}
                       >
                         <div className="w-2 h-2 rounded-full flex-shrink-0"
@@ -473,8 +476,8 @@ export function BackendSelector() {
                 </div>
               )}
 
-              {/* No available providers */}
-              {cloudProviders.length > 0 && cloudProviders.filter(p => p.hasKey || p.anonAccess).length === 0 && (
+              {/* No providers loaded at all */}
+              {cloudProviders.length > 0 && cloudProviders.every(p => !p.hasKey && !p.anonAccess) && (
                 <div className="flex items-start gap-2 px-3 py-3 rounded-xl border border-warning/20 bg-warning/5 text-xs text-amber/80">
                   <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
                   <span>

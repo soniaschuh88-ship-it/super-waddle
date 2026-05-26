@@ -375,8 +375,9 @@ export function Dashboard({
       setLocalStatuses(p => p.map(s => s.type === 'webgpu' ? { ...s, online: true } : s));
     }
 
-    const ollamaUrl = backendConfig.type === 'ollama' ? backendConfig.serverUrl : 'http://localhost:11434';
-    const llamaUrl  = backendConfig.type === 'llama-cpp' ? backendConfig.serverUrl : 'http://localhost:8001';
+    // All local backend calls go through the bKG server proxy — never direct localhost
+    const ollamaUrl = 'http://localhost:11434';  // value used only to select which proxy endpoint
+    const llamaUrl  = 'http://localhost:8001';   // pingRestBackend detects localhost and uses /api/proxy/ping
 
     const [ollamaOk, llamaOk] = await Promise.all([
       pingRestBackend(ollamaUrl).catch(() => false),
@@ -543,7 +544,7 @@ export function Dashboard({
           </div>
 
           {isPrivate ? (
-            <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {localStatuses.map(s => (
                 <LocalModelCard
                   key={s.type}
@@ -568,7 +569,7 @@ export function Dashboard({
                   <Key size={10}/>Manage keys
                 </button>
               </div>
-              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                 {cloudProviders.map(p => (
                   <CloudProviderCard
                     key={p.id}
@@ -592,7 +593,7 @@ export function Dashboard({
           <h2 className="text-xs font-bold text-text-primary uppercase tracking-[0.15em] mb-4 flex items-center gap-2">
             <Zap size={12} className="text-accent"/>Quick Actions
           </h2>
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <ActionCard
               icon={Plus}
               label="New Plan"

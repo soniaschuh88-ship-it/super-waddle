@@ -120,7 +120,31 @@ async function cloudStream(
 
 // ── Connectivity ──────────────────────────────────────────────────────────────
 
+/**
+ * Proxy base URLs — all local backend calls go through the bKG server to
+ * avoid CORS issues when the app is served via a tunnel (serveo, ngrok, etc).
+ */
+export const OLLAMA_PROXY = '/api/proxy/ollama';
+export const LLAMA_PROXY  = '/api/proxy/llama';
+
+/**
+ * Ping a REST backend.
+ * For local backends (Ollama / llama-cpp) this always uses the server-side
+ * proxy so it works regardless of tunnel/CORS.
+ */
 export async function pingRestBackend(baseUrl: string): Promise<boolean> {
+  // Route local backends through the server-side proxy
+  if (baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
+    try {
+      const r = await fetch('/api/proxy/ping', { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return false;
+      const d = await r.json() as { ollama: boolean; llama: boolean };
+      if (baseUrl.includes('11434')) return d.ollama;
+      if (baseUrl.includes('8001'))  return d.llama;
+      return d.ollama || d.llama;
+    } catch { return false; }
+  }
+  // Remote URL — direct call is fine
   try {
     const r = await fetch(`${baseUrl}/v1/models`, { signal: AbortSignal.timeout(3000) });
     return r.ok;
@@ -131,17 +155,18 @@ export async function pingRestBackend(baseUrl: string): Promise<boolean> {
 
 export interface OllamaModel { name: string; size: number; modified_at: string; }
 
-export async function ollamaListModels(base: string): Promise<OllamaModel[]> {
+export async function ollamaListModels(_base: string): Promise<OllamaModel[]> {
+  // Always use server proxy — avoids CORS when tunnelled
   try {
-    const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(`${OLLAMA_PROXY}/tags`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) return [];
     const d = await r.json() as { models: OllamaModel[] };
     return d.models ?? [];
   } catch { return []; }
 }
 
-export async function ollamaPullModel(base: string, name: string, onProgress: (status: string, pct: number) => void): Promise<void> {
-  const r = await fetch(`${base}/api/pull`, {
+export async function ollamaPullModel(_base: string, name: string, onProgress: (status: string, pct: number) => void): Promise<void> {
+  const r = await fetch(`${OLLAMA_PROXY}/pull`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, stream: true }),
   });
@@ -161,8 +186,8 @@ export async function ollamaPullModel(base: string, name: string, onProgress: (s
   }
 }
 
-export async function ollamaDeleteModel(base: string, name: string): Promise<void> {
-  const r = await fetch(`${base}/api/delete`, {
+export async function ollamaDeleteModel(_base: string, name: string): Promise<void> {
+  const r = await fetch(`${OLLAMA_PROXY}/delete`, {
     method: 'DELETE', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   });
@@ -192,33 +217,34 @@ export function filterByMaxSize<T extends { sizeB: number }>(models: T[], maxB: 
 export interface LlamaCppModel { id: string; path: string; }
 export interface LlamaCppGpuInfo { backend: string; gpuInfo: unknown }
 
-export async function llamaCppListModels(base: string): Promise<LlamaCppModel[]> {
+export async function llamaCppListModels(_base: string): Promise<LlamaCppModel[]> {
   try {
-    const r = await fetch(`${base}/v1/models`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(`${LLAMA_PROXY}/models`, { signal: AbortSignal.timeout(5000) });
     if (!r.ok) return [];
     const d = await r.json() as { data: LlamaCppModel[] };
     return d.data ?? [];
   } catch { return []; }
 }
 
-export async function llamaCppGetGpu(base: string): Promise<LlamaCppGpuInfo | null> {
+export async function llamaCppGetGpu(_base: string): Promise<LlamaCppGpuInfo | null> {
   try {
-    const r = await fetch(`${base}/gpu`, { signal: AbortSignal.timeout(4000) });
+    // GPU info is served by the bKG llama-cpp server manager
+    const r = await fetch('/api/llama/gpu', { signal: AbortSignal.timeout(4000) });
     if (!r.ok) return null;
     return r.json() as Promise<LlamaCppGpuInfo>;
   } catch { return null; }
 }
 
-export async function llamaCppGetHealth(base: string): Promise<{ status: string; modelLoaded: boolean; modelPath: string | null } | null> {
+export async function llamaCppGetHealth(_base: string): Promise<{ status: string; modelLoaded: boolean; modelPath: string | null } | null> {
   try {
-    const r = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${LLAMA_PROXY}/health`, { signal: AbortSignal.timeout(3000) });
     if (!r.ok) return null;
     return r.json();
   } catch { return null; }
 }
 
-export async function llamaCppSwapModel(base: string, modelPath: string): Promise<void> {
-  const r = await fetch(`${base}/model`, {
+export async function llamaCppSwapModel(_base: string, modelPath: string): Promise<void> {
+  const r = await fetch(`${LLAMA_PROXY}/model`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ modelPath }),
   });
@@ -226,11 +252,12 @@ export async function llamaCppSwapModel(base: string, modelPath: string): Promis
 }
 
 export async function llamaCppPullModel(
-  base: string,
+  _base: string,
   uri: string,
   onProgress: (status: string, pct: number) => void,
 ): Promise<void> {
-  const r = await fetch(`${base}/models/pull`, {
+  // llama-cpp model pull goes through the bKG model manager
+  const r = await fetch('/api/llama/pull', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uri }),
   });
@@ -256,8 +283,9 @@ export async function llamaCppPullModel(
   }
 }
 
-export async function llamaCppDeleteModel(base: string, filename: string): Promise<void> {
-  const r = await fetch(`${base}/models/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+export async function llamaCppDeleteModel(_base: string, filename: string): Promise<void> {
+  // Route through the bKG model manager endpoint
+  const r = await fetch(`/api/llama/models/${encodeURIComponent(filename)}`, { method: 'DELETE' });
   if (!r.ok) throw new Error(`Delete failed: ${r.status}`);
 }
 

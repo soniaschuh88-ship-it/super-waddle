@@ -12,7 +12,6 @@
 import { spawn }    from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath }  from 'url';
-import { createServer } from 'http';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -34,11 +33,20 @@ function pushSALog(line) {
 
 // ── Check if sandbox-agent is already listening ───────────────────────────────
 
+/**
+ * Check if sandbox-agent is already running by trying to connect to its port.
+ * Uses a TCP connection attempt instead of binding (which temporarily occupies the port
+ * and causes sandbox-agent to fail with exit code 101 / EADDRINUSE).
+ */
 async function isSARunning() {
   return new Promise(resolve => {
-    const s = createServer();
-    s.listen(SA_PORT, SA_HOST, () => { s.close(); resolve(false); });
-    s.on('error', () => resolve(true));
+    const net = require('net');
+    const sock = new net.Socket();
+    sock.setTimeout(1000);
+    sock.on('connect', () => { sock.destroy(); resolve(true); });
+    sock.on('timeout', () => { sock.destroy(); resolve(false); });
+    sock.on('error',   () => { sock.destroy(); resolve(false); });
+    sock.connect(SA_PORT, SA_HOST);
   });
 }
 

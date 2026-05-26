@@ -265,7 +265,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isPrivate  = mode === 'private';
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-base relative">
+    <div className="flex flex-col h-screen overflow-hidden bg-base relative" style={{ maxWidth: '100vw' }}>
 
       {/* ── Top scan-line ambient ── */}
       <div
@@ -387,7 +387,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Mode banner */}
       {isHome && (
         <div
-          className="flex-shrink-0 flex items-center gap-2 px-4 py-1.5 text-[11px]"
+          className="flex-shrink-0 flex items-center gap-2 px-3 sm:px-4 py-1.5 text-[11px] overflow-hidden"
           style={{
             background: isPrivate
               ? 'linear-gradient(90deg, rgba(255,179,0,0.05) 0%, transparent 100%)'
@@ -398,14 +398,14 @@ export function AppShell({ children }: { children: ReactNode }) {
           {isPrivate ? (
             <>
               <Lock size={10} className="text-amber flex-shrink-0"/>
-              <span className="text-amber/70 font-semibold">PRIVATE MODE</span>
-              <span className="text-muted/50">— Using local WebGPU · Ollama · node-llama-cpp. Your data never leaves your device.</span>
+              <span className="text-amber/80 font-bold flex-shrink-0">PRIVATE</span>
+              <span className="text-muted/60 truncate hidden xs:block">Local WebGPU · Ollama · llama-cpp</span>
             </>
           ) : (
             <>
               <Cloud size={10} className="text-accent flex-shrink-0"/>
-              <span className="text-accent/70 font-semibold">CLOUD MODE</span>
-              <span className="text-muted/50">— Using free providers: Groq · NVIDIA · OpenRouter · Mistral and more.</span>
+              <span className="text-accent/80 font-bold flex-shrink-0">CLOUD</span>
+              <span className="text-muted/60 truncate hidden xs:block">Free providers: Groq · NVIDIA · OpenRouter</span>
             </>
           )}
           <button

@@ -359,6 +359,105 @@ app.get('/api-keys/scopes', (_req, res) => {
   });
 });
 
+// ── /api/proxy/* — server-side proxy for local backends (avoids browser CORS) ─
+//
+// The browser can never reach http://localhost:11434 or http://localhost:8001
+// when served through a tunnel.  These endpoints run server-side and forward
+// requests to the local Ollama / llama-cpp servers on behalf of the browser.
+
+/** GET /api/proxy/ollama/tags — list installed Ollama models */
+app.get('/api/proxy/ollama/tags', async (_req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${OLLAMA_PORT}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return res.status(r.status).json({ error: `Ollama ${r.status}` });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(503).json({ error: 'Ollama unreachable', detail: e.message });
+  }
+});
+
+/** POST /api/proxy/ollama/pull — pull a model (streams progress) */
+app.post('/api/proxy/ollama/pull', async (req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${OLLAMA_PORT}/api/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(600000),
+    });
+    res.setHeader('Content-Type', r.headers.get('content-type') ?? 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    r.body.on('data', chunk => res.write(chunk));
+    r.body.on('end',  ()    => res.end());
+    r.body.on('error',()    => res.end());
+  } catch (e) {
+    if (!res.headersSent) res.status(502).json({ error: e.message });
+  }
+});
+
+/** DELETE /api/proxy/ollama/delete — delete an Ollama model */
+app.delete('/api/proxy/ollama/delete', async (req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${OLLAMA_PORT}/api/delete`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body ?? {}),
+      signal: AbortSignal.timeout(30000),
+    });
+    res.status(r.ok ? 200 : r.status).json(await r.json().catch(() => ({ ok: r.ok })));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+/** GET /api/proxy/llama/models — list loaded GGUF models */
+app.get('/api/proxy/llama/models', async (_req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/models`, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return res.status(r.status).json({ error: `llama-cpp ${r.status}` });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(503).json({ error: 'llama-cpp unreachable', detail: e.message });
+  }
+});
+
+/** GET /api/proxy/llama/health — llama-cpp health check */
+app.get('/api/proxy/llama/health', async (_req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${LLAMA_PORT}/health`, { signal: AbortSignal.timeout(3000) });
+    res.status(r.ok ? 200 : r.status).json(await r.json().catch(() => ({ status: r.ok ? 'ok' : 'error' })));
+  } catch (e) {
+    res.status(503).json({ error: 'llama-cpp unreachable' });
+  }
+});
+
+/** POST /api/proxy/llama/model — swap model (PUT forwarded) */
+app.put('/api/proxy/llama/model', async (req, res) => {
+  try {
+    const r = await fetch(`http://127.0.0.1:${LLAMA_PORT}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body ?? {}),
+    });
+    res.status(r.ok ? 200 : r.status).json(await r.json().catch(() => ({ ok: r.ok })));
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
+
+/** GET /api/proxy/ping — quick reachability check for both local servers */
+app.get('/api/proxy/ping', async (_req, res) => {
+  const [ollamaOk, llamaOk] = await Promise.all([
+    fetch(`http://127.0.0.1:${OLLAMA_PORT}/api/tags`, { signal: AbortSignal.timeout(2000) })
+      .then(r => r.ok).catch(() => false),
+    fetch(`http://127.0.0.1:${LLAMA_PORT}/v1/models`, { signal: AbortSignal.timeout(2000) })
+      .then(r => r.ok).catch(() => false),
+  ]);
+  res.json({ ollama: ollamaOk, llama: llamaOk });
+});
+
 app.get('/api/status', async (_req, res) => {
   const [llama, ollama] = await Promise.all([serverStatus('llama'), serverStatus('ollama')]);
   res.json({ llama, ollama });
