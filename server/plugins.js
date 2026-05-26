@@ -29,10 +29,10 @@ import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 
-const __dir      = dirname(fileURLToPath(import.meta.url));
-const ICADP_DIR  = join(homedir(), '.bkg');
-const NPM_DIR    = join(BKG_DIR, 'plugins', 'npm');
-const GIT_DIR    = join(ICADP_DIR, 'plugins', 'git');
+const __dir    = dirname(fileURLToPath(import.meta.url));
+const BKG_DIR  = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+const NPM_DIR  = join(BKG_DIR, 'plugins', 'npm');
+const GIT_DIR  = join(BKG_DIR, 'plugins', 'git');
 const INDEX_FILE = join(BKG_DIR, 'plugins', 'index.json');
 
 for (const d of [NPM_DIR, GIT_DIR]) mkdirSync(d, { recursive: true });
