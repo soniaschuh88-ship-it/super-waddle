@@ -1,7 +1,7 @@
 // bKG – Core Type Definitions
 
-/** The six top-level stages. 'home' is the landing dashboard, 'agenthub' is the Agent Hub. */
-export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3' | 'agenthub';
+/** The seven top-level stages. */
+export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3' | 'agenthub' | 'flow';
 export type Stufe1Step = 'idea' | 'features' | 'generating';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error';
 /** Inference backend selection.

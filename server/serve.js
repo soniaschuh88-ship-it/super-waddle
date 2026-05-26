@@ -81,6 +81,20 @@ import {
 } from './bkg-hub.js';
 
 import {
+  flowHealth, listProjects, getProject, createProject, updateProject, archiveProject,
+  listTasks, getTask, createTask, updateTask, deleteTask, moveTask, searchTasks,
+  getComments, addComment, appendLog, getTaskLogs, subscribeTaskLogs,
+  getWorkflowSteps, addWorkflowStep, updateWorkflowStep,
+  addDependency, removeDependency,
+  listMissions, getMission, createMission, updateMission,
+  listMilestones, createMilestone,
+  getActivity,
+  listSecrets, setSecret, deleteSecret,
+  getEvals, createEval,
+  getBoardData, buildPlanningPrompt, savePlanMd,
+} from './bkg-flow.js';
+
+import {
   PROVIDERS, getProvider, providersByTier, resolveProviderKey, fetchProviderModels,
 } from './providers.js';
 
@@ -653,6 +667,243 @@ app.get('/plugins/search', async (req, res) => {
   const q       = req.query.q ?? 'pi-package';
   const results = await searchNpm(q);
   res.json(results);
+});
+
+// ── /flow/* — bKG Flow (AI task & workflow management) ───────────────────────
+//
+// Rebraneded / refactored from the Fusion project management system.
+// Full task lifecycle, kanban board, AI planning, missions, secrets, evals.
+
+app.get('/flow/health', (_req, res) => res.json(flowHealth()));
+
+// ── Projects ──────────────────────────────────────────────────────────────────
+
+app.get('/flow/projects',        (_req, res) => res.json(listProjects()));
+app.get('/flow/projects/:id',    (req, res) => {
+  const p = getProject(req.params.id);
+  p ? res.json(p) : res.status(404).json({ error: 'Project not found' });
+});
+app.post('/flow/projects',       (req, res) => {
+  try { res.status(201).json(createProject(req.body ?? {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.put('/flow/projects/:id',    (req, res) => res.json(updateProject(req.params.id, req.body ?? {})));
+app.delete('/flow/projects/:id', (req, res) => { archiveProject(req.params.id); res.json({ ok: true }); });
+
+// ── Board ─────────────────────────────────────────────────────────────────────
+
+app.get('/flow/board/:projectId', (req, res) => res.json(getBoardData(req.params.projectId)));
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+
+app.get('/flow/tasks', (req, res) => {
+  const pid = req.query.projectId ?? 'default';
+  res.json(listTasks(pid, { status: req.query.status, missionId: req.query.missionId }));
+});
+
+app.get('/flow/tasks/search', (req, res) => {
+  const pid = req.query.projectId ?? 'default';
+  if (!req.query.q) return res.status(400).json({ error: 'q required' });
+  res.json(searchTasks(pid, req.query.q));
+});
+
+app.post('/flow/tasks', (req, res) => {
+  try { res.status(201).json(createTask(req.body ?? {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.get('/flow/tasks/:id', (req, res) => {
+  const t = getTask(req.params.id);
+  t ? res.json(t) : res.status(404).json({ error: 'Task not found' });
+});
+
+app.put('/flow/tasks/:id', (req, res) => {
+  const t = updateTask(req.params.id, req.body ?? {});
+  t ? res.json(t) : res.status(404).json({ error: 'Task not found' });
+});
+
+app.delete('/flow/tasks/:id', (req, res) => {
+  deleteTask(req.params.id)
+    ? res.json({ ok: true })
+    : res.status(404).json({ error: 'Task not found' });
+});
+
+/** POST /flow/tasks/:id/move — change status + reorder
+ *  Body: { status: string, index?: number }
+ */
+app.post('/flow/tasks/:id/move', (req, res) => {
+  const { status, index } = req.body ?? {};
+  if (!status) return res.status(400).json({ error: 'status required' });
+  res.json(moveTask(req.params.id, status, index ?? null));
+});
+
+// ── AI Task Planning ──────────────────────────────────────────────────────────
+
+/**
+ * POST /flow/tasks/:id/plan — generate PROMPT.md via AI
+ *
+ * Uses /providers/proxy (cloud mode) or local backends (private mode)
+ * to generate a planning document for the task.
+ */
+app.post('/flow/tasks/:id/plan', async (req, res) => {
+  const task = getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const project  = getProject(task.project_id);
+  const { system, user } = buildPlanningPrompt(task, project);
+
+  // Update task to planning status
+  updateTask(task.id, { status: 'planning' });
+  appendLog(task.id, 'AI planning started…', 'info');
+
+  // Resolve provider + model for planning
+  const providerId = req.body?.providerId ?? 'groq';
+  const model      = req.body?.model ?? 'llama-3.3-70b-versatile';
+  const keyId      = getCallerKeyId(req);
+  const { key }    = resolveKeyForUser(providerId, keyId ?? '');
+
+  if (!key) {
+    appendLog(task.id, `No API key for ${providerId} — using simple template`, 'warn');
+    const fallback = `# Task: ${task.title}\n\n## Objective\n${task.description || 'Implement the task as described.'}\n\n## Acceptance Criteria\n- [ ] Implementation complete\n- [ ] Tests pass\n- [ ] Code reviewed\n\n## Implementation Steps\n1. Analyse requirements\n2. Implement solution\n3. Write tests\n4. Review\n`;
+    const updated = savePlanMd(task.id, fallback);
+    return res.json(updated);
+  }
+
+  // Stream response and collect
+  try {
+    const { default: fetch } = await import('node-fetch').catch(() => ({ default: globalThis.fetch }));
+    const p = getProvider(providerId);
+    const headers = { 'Content-Type': 'application/json' };
+    if (key !== 'anon') headers['Authorization'] = `Bearer ${key}`;
+
+    const r = await fetch(`${p.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        stream: false,
+        max_tokens: 2048,
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!r.ok) throw new Error(`Provider ${r.status}`);
+    const d    = await r.json();
+    const text = d.choices?.[0]?.message?.content ?? '';
+    const updated = savePlanMd(task.id, text);
+    appendLog(task.id, 'Planning complete ✓', 'info');
+    res.json(updated);
+  } catch (e) {
+    appendLog(task.id, `Planning failed: ${e.message}`, 'error');
+    updateTask(task.id, { status: 'todo' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Task Logs (SSE) ───────────────────────────────────────────────────────────
+
+app.get('/flow/tasks/:id/logs', (req, res) => {
+  const taskId = req.params.id;
+  const since  = parseInt(req.query.since ?? '0', 10);
+
+  if (req.headers.accept === 'text/event-stream') {
+    // SSE streaming
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.flushHeaders();
+
+    // Send existing logs
+    for (const log of getTaskLogs(taskId, since)) {
+      res.write(`data: ${JSON.stringify(log)}\n\n`);
+    }
+
+    const unsub = subscribeTaskLogs(taskId, log => {
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify(log)}\n\n`);
+    });
+
+    const hb = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); else clearInterval(hb); }, 15000);
+    req.on('close', () => { unsub(); clearInterval(hb); });
+  } else {
+    res.json(getTaskLogs(taskId, since));
+  }
+});
+
+// ── Task comments ─────────────────────────────────────────────────────────────
+
+app.get('/flow/tasks/:id/comments',  (req, res) => res.json(getComments(req.params.id)));
+app.post('/flow/tasks/:id/comments', (req, res) => {
+  const { body, author } = req.body ?? {};
+  if (!body) return res.status(400).json({ error: 'body required' });
+  res.status(201).json(addComment(req.params.id, body, author ?? 'user'));
+});
+
+// ── Workflow steps ────────────────────────────────────────────────────────────
+
+app.get('/flow/tasks/:id/steps', (req, res) => res.json(getWorkflowSteps(req.params.id)));
+app.post('/flow/tasks/:id/steps', (req, res) => {
+  try { res.status(201).json(addWorkflowStep(req.params.id, req.body ?? {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.put('/flow/steps/:id', (req, res) => res.json(updateWorkflowStep(req.params.id, req.body ?? {})));
+
+// ── Dependencies ──────────────────────────────────────────────────────────────
+
+app.post('/flow/tasks/:id/deps',   (req, res) => {
+  const { depId } = req.body ?? {};
+  if (!depId) return res.status(400).json({ error: 'depId required' });
+  res.json(addDependency(req.params.id, depId));
+});
+app.delete('/flow/tasks/:id/deps/:depId', (req, res) =>
+  res.json(removeDependency(req.params.id, req.params.depId)),
+);
+
+// ── Missions ──────────────────────────────────────────────────────────────────
+
+app.get('/flow/missions',       (req, res) => res.json(listMissions(req.query.projectId ?? 'default')));
+app.post('/flow/missions',      (req, res) => {
+  try { res.status(201).json(createMission(req.body ?? {})); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.get('/flow/missions/:id',   (req, res) => {
+  const m = getMission(req.params.id);
+  m ? res.json(m) : res.status(404).json({ error: 'Mission not found' });
+});
+app.put('/flow/missions/:id',   (req, res) => res.json(updateMission(req.params.id, req.body ?? {})));
+
+app.get('/flow/missions/:id/milestones', (req, res) => res.json(listMilestones(req.params.id)));
+app.post('/flow/missions/:id/milestones', (req, res) => {
+  try { res.status(201).json(createMilestone({ ...req.body, missionId: req.params.id })); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// ── Activity ──────────────────────────────────────────────────────────────────
+
+app.get('/flow/activity', (req, res) =>
+  res.json(getActivity(req.query.projectId ?? 'default', parseInt(req.query.limit ?? '50', 10))),
+);
+
+// ── Secrets ───────────────────────────────────────────────────────────────────
+
+app.get('/flow/secrets', (req, res) => res.json(listSecrets(req.query.projectId ?? 'default')));
+app.post('/flow/secrets', (req, res) => {
+  const { projectId = 'default', name, value, policy } = req.body ?? {};
+  if (!name || !value) return res.status(400).json({ error: 'name and value required' });
+  res.json(setSecret(projectId, name, value, policy));
+});
+app.delete('/flow/secrets/:name', (req, res) =>
+  res.json(deleteSecret(req.query.projectId ?? 'default', req.params.name)),
+);
+
+// ── Evaluations ───────────────────────────────────────────────────────────────
+
+app.get('/flow/tasks/:id/evals',  (req, res) => res.json(getEvals(req.params.id)));
+app.post('/flow/tasks/:id/evals', (req, res) => {
+  const { score, evidence } = req.body ?? {};
+  if (score === undefined) return res.status(400).json({ error: 'score required' });
+  res.status(201).json(createEval(req.params.id, parseFloat(score), evidence ?? {}));
 });
 
 // ── /hub/* — bKG Agent Hub (pure Node.js, full feature set) ─────────────────

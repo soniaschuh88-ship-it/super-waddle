@@ -18,11 +18,13 @@
     "@earendil-works/pi-ai": "^0.75.5",
     "@earendil-works/pi-coding-agent": "^0.75.5",
     "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.10.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "node-llama-cpp": "^3.0.0",
-    "sandbox-agent": "^0.4.2"
+    "sandbox-agent": "^0.4.2",
+    "uuid": "^14.0.0"
   },
   "engines": {
     "node": ">=20"

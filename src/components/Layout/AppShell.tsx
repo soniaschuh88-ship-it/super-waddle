@@ -10,7 +10,7 @@
  */
 import { type ReactNode, useState, useEffect, useRef } from 'react';
 import {
-  Cpu, X, Settings, LayoutDashboard, Plus, Bot,
+  Cpu, X, Settings, LayoutDashboard, Plus, Bot, Zap,
   Menu, ChevronRight, Lock, Cloud,
 } from 'lucide-react';
 import { StageProgress }  from './StageProgress';
@@ -344,6 +344,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             ].join(' ')}
           >
             <Bot size={13}/><span>Agents</span>
+          </button>
+
+          {/* Flow Board */}
+          <button
+            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'flow' as import('@/types').Stage })}
+            className={[
+              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
+              state.stage === 'flow'
+                ? 'text-accent border-accent/30 bg-accent/8'
+                : 'text-muted border-transparent hover:text-accent hover:bg-accent/6 hover:border-accent/15',
+            ].join(' ')}
+          >
+            <Zap size={13}/><span>Flow</span>
           </button>
 
           {/* Admin */}

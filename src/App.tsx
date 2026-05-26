@@ -9,6 +9,7 @@ import { ValidationLoop }        from '@/components/Stufe1_5/ValidationLoop';
 import { DualPaneExplorer }      from '@/components/Stufe2/DualPaneExplorer';
 import { CodeStudio }            from '@/components/CodeStudio/CodeStudio';
 import { AgentHub }              from '@/components/AgentHub/AgentHub';
+import { FlowBoard }             from '@/components/Flow/FlowBoard';
 import { useAppState }           from '@/context/AppContext';
 
 type HomeView = 'dashboard' | 'tester' | 'settings';
@@ -38,6 +39,7 @@ function StageView() {
     case 'stufe2':    return <DualPaneExplorer/>;
     case 'stufe3':    return <CodeStudio/>;
     case 'agenthub':  return <AgentHub/>;
+    case 'flow':      return <FlowBoard/>;
     default:          return (
       <Dashboard
         onTestModel={() => setHomeView('tester')}
