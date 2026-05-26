@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Cpu, Server, HardDrive, Plus, Code2, FlaskConical, Key,
   CheckCircle, Loader2, Zap, FolderOpen, ChevronRight,
-  Cloud, Lock, Globe, RefreshCw, Wifi, WifiOff, Sparkles, Gamepad2, Layers,
+  Cloud, Lock, RefreshCw, Wifi, WifiOff, Sparkles, Gamepad2, Layers, ExternalLink,
 } from 'lucide-react';
 import { useAppState }           from '@/context/AppContext';
 import { pingRestBackend, ollamaListModels, llamaCppListModels } from '@/lib/llm-client';
@@ -214,22 +214,36 @@ function CloudPanel({
   onManageKeys: () => void;
   dispatch:     (a: import('@/types').AppAction) => void;
 }) {
-  const [selectedId,    setSelectedId]    = useState(() =>
-    localStorage.getItem('bkg_cloud_provider') ?? '',
-  );
+  const [selectedId,    setSelectedId]    = useState('');
   const [models,        setModels]        = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState(() =>
-    localStorage.getItem('bkg_cloud_model') ?? '',
-  );
+  const [selectedModel, setSelectedModel] = useState('');
   const [fetchingModels,setFetchingModels]= useState(false);
   const [testing,       setTesting]       = useState(false);
   const [testResult,    setTestResult]    = useState<'ok'|'fail'|null>(null);
   const [testReply,     setTestReply]     = useState('');
 
-  // Fetch models when provider changes
+  // Initialise selection from localStorage whenever providers load
+  useEffect(() => {
+    if (!providers.length) return;
+    const savedId    = localStorage.getItem('bkg_cloud_provider') ?? '';
+    const savedModel = localStorage.getItem('bkg_cloud_model') ?? '';
+
+    // Use saved if it exists in current list AND has a key; otherwise pick first available
+    const saved    = providers.find(p => p.id === savedId);
+    const fallback = providers.find(p => p.hasKey) ?? providers.find(p => p.source === 'anon');
+
+    const pick = (saved?.hasKey || saved?.source === 'anon') ? saved : fallback;
+    if (pick) {
+      setSelectedId(pick.id);
+      if (savedModel) setSelectedModel(savedModel);
+    }
+  }, [providers]);  // re-run when providers refresh
+
+  // Fetch models whenever selectedId changes
   useEffect(() => {
     if (!selectedId) { setModels([]); return; }
     setFetchingModels(true);
+    setModels([]);
     const headers: Record<string, string> = {};
     const k = localStorage.getItem('bkg_user_api_key');
     if (k) headers['Authorization'] = `Bearer ${k}`;
@@ -237,24 +251,23 @@ function CloudPanel({
     fetch(`/providers/${selectedId}/models`, { headers })
       .then(r => r.ok ? r.json() : null)
       .then((d: unknown) => {
-        if (!d) { setModels([]); return; }
-        const data = d as { models?: Array<{ id: string }> };
-        const list = (data.models ?? []).map((m) => m.id).slice(0, 30);
+        const data = d as { models?: Array<{ id: string }> } | null;
+        const list = (data?.models ?? []).map((m) => m.id).slice(0, 40);
         setModels(list);
-        // Auto-select first model if none selected
-        if (list.length > 0 && (!selectedModel || !list.includes(selectedModel))) {
-          setSelectedModel(list[0]);
-          localStorage.setItem('bkg_cloud_model', list[0]);
+        if (list.length > 0) {
+          const saved = localStorage.getItem('bkg_cloud_model') ?? '';
+          const model = list.includes(saved) ? saved : list[0];
+          setSelectedModel(model);
+          localStorage.setItem('bkg_cloud_model', model);
         }
       })
       .catch(() => setModels([]))
       .finally(() => setFetchingModels(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
   const selectProvider = (id: string) => {
+    if (id === selectedId) return;
     setSelectedId(id);
-    setModels([]);
     setTestResult(null);
     setTestReply('');
     localStorage.setItem('bkg_cloud_provider', id);
@@ -283,135 +296,156 @@ function CloudPanel({
 
     try {
       const r = await fetch('/providers/proxy', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          provider:   selectedId,
-          model:      selectedModel,
-          messages:   [{ role: 'user', content: 'Reply with exactly two words: WORKS GREAT' }],
-          stream:     false,
-          max_tokens: 15,
-        }),
+        method: 'POST', headers,
+        body: JSON.stringify({ provider: selectedId, model: selectedModel,
+          messages: [{ role: 'user', content: 'Reply two words: WORKS GREAT' }],
+          stream: false, max_tokens: 12 }),
         signal: AbortSignal.timeout(15000),
       });
       if (r.ok) {
         const d = await r.json() as { choices: Array<{ message: { content: string } }> };
-        const reply = d.choices?.[0]?.message?.content ?? '';
-        setTestReply(reply);
+        setTestReply(d.choices?.[0]?.message?.content?.trim() ?? '');
         setTestResult('ok');
       } else {
         const e = await r.json().catch(() => ({})) as { error?: string };
-        setTestReply(e.error ?? `${r.status}`);
+        setTestReply(e.error?.slice(0, 80) ?? `HTTP ${r.status}`);
         setTestResult('fail');
       }
-    } catch (e) {
-      setTestReply(e instanceof Error ? e.message : 'timeout');
-      setTestResult('fail');
-    }
+    } catch (e) { setTestReply(e instanceof Error ? e.message : 'timeout'); setTestResult('fail'); }
     setTesting(false);
   };
 
-  const curProvider = providers.find(p => p.id === selectedId);
-  const accessibleProviders = providers.filter(p => p.hasKey);
-  const displayProviders    = providers.filter(p => p.hasKey || p.source === 'anon' || p.tier === 'free');
+  const curProvider    = providers.find(p => p.id === selectedId);
+  const configuredCount = providers.filter(p => p.hasKey).length;
+  const freeCount       = providers.filter(p => p.source === 'anon').length;
+
+  // Show ALL providers — grouped: available first, then rest
+  const available  = providers.filter(p => p.hasKey || p.source === 'anon');
+  const needsKey   = providers.filter(p => !p.hasKey && p.source !== 'anon');
+
+  if (providers.length === 0) return (
+    <div className="rounded-2xl border border-border/50 bg-panel/40 p-6 flex flex-col items-center gap-3 text-center">
+      <Loader2 size={20} className="text-muted/30 animate-spin"/>
+      <p className="text-xs text-muted/50">Loading cloud providers…</p>
+    </div>
+  );
 
   return (
-    <div className="rounded-2xl border border-border/50 bg-panel/40 p-4 flex flex-col gap-4">
+    <div className="rounded-2xl border border-border/50 bg-panel/40 flex flex-col gap-0 overflow-hidden">
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs text-muted/70">
-          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"/>
-          {accessibleProviders.length} configured · {providers.filter(p=>p.source==='anon').length} free
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border/30">
+        <div className="flex items-center gap-3 text-[11px] text-muted/60">
+          <span className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-success"/>
+            <strong className="text-text-primary">{configuredCount}</strong> configured
+          </span>
+          <span>·</span>
+          <span><strong className="text-text-primary">{freeCount}</strong> free</span>
         </div>
         <button onClick={onManageKeys}
-          className="text-[11px] text-accent/70 hover:text-accent flex items-center gap-1 transition-colors">
-          <Key size={10}/>Manage Keys
+          className="text-[11px] text-accent/60 hover:text-accent flex items-center gap-1 transition-colors">
+          <Key size={10}/>Add Keys
         </button>
       </div>
 
-      {/* Provider grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
-        {displayProviders.map(p => {
-          const isSelected = p.id === selectedId;
-          const available  = p.hasKey || p.source === 'anon';
-          return (
-            <button key={p.id}
-              onClick={() => available ? selectProvider(p.id) : onManageKeys()}
-              className={[
-                'flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all',
-                isSelected ? 'border-accent/50 bg-accent/8 shadow-glow-sm' : available ? 'border-border/50 hover:border-accent/25 bg-panel/50' : 'border-border/30 bg-panel/30 opacity-50',
-              ].join(' ')}>
-              <div className={['w-1.5 h-1.5 rounded-full flex-shrink-0', p.source==='anon'?'bg-success/60 animate-pulse':p.hasKey?'bg-success':'bg-border'].join(' ')}/>
-              <span className={['flex-1 text-[11px] font-semibold truncate', isSelected?'text-accent':'text-text-primary/80'].join(' ')}>{p.name}</span>
-              {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"/>}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Model selector + test */}
-      {selectedId && (
-        <div className="flex flex-col gap-2.5 border-t border-border/30 pt-3">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted/50 flex-shrink-0">
-              {curProvider?.name}
-            </span>
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium flex-shrink-0 ${TIER_BADGE[curProvider?.tier ?? 'free']?.cls}`}>
-              {TIER_BADGE[curProvider?.tier ?? 'free']?.label}
-            </span>
-            {fetchingModels && <Loader2 size={10} className="text-muted/40 animate-spin ml-auto"/>}
-          </div>
-
-          {/* Model dropdown */}
-          {models.length > 0 ? (
-            <select value={selectedModel} onChange={e => selectModel(e.target.value)}
-              className="bg-base/80 border border-border text-text-primary text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-accent/40 w-full">
-              {models.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          ) : !fetchingModels ? (
-            <p className="text-[11px] text-muted/40 italic">No models found — add an API key in Settings</p>
-          ) : null}
-
-          {/* Action row */}
-          <div className="flex gap-2">
-            <button
-              onClick={testModel}
-              disabled={!selectedModel || testing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-xl border border-accent/25 text-accent/80 hover:text-accent hover:border-accent/50 transition-all disabled:opacity-40"
-            >
-              {testing ? <Loader2 size={10} className="animate-spin"/> : <FlaskConical size={10}/>}
-              Test
-            </button>
-            <button
-              onClick={activateBackend}
-              disabled={!selectedModel}
-              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-xl bg-accent text-base btn-glow hover:brightness-110 transition-all disabled:opacity-40"
-            >
-              <Zap size={10}/>Use this model
-            </button>
-          </div>
-
-          {/* Test result */}
-          {testResult && (
-            <div className={[
-              'px-3 py-2 rounded-xl border text-[11px] font-mono',
-              testResult === 'ok' ? 'border-success/30 bg-success/5 text-success/80' : 'border-error/30 bg-error/5 text-error/80',
-            ].join(' ')}>
-              {testResult === 'ok' ? '✅ ' : '❌ '}{testReply}
+      {/* Provider grid — ALL providers */}
+      <div className="p-3 flex flex-col gap-3">
+        {/* Available section */}
+        {available.length > 0 && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-success/50 mb-1.5 px-0.5">Available</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {available.map(p => {
+                const isSelected = p.id === selectedId;
+                return (
+                  <button key={p.id} onClick={() => selectProvider(p.id)}
+                    className={[
+                      'flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all hover:scale-[1.01]',
+                      isSelected
+                        ? 'border-accent/50 bg-accent/10'
+                        : p.source === 'anon' ? 'border-success/25 bg-success/5 hover:border-success/50' : 'border-border/60 bg-panel/60 hover:border-accent/30',
+                    ].join(' ')}>
+                    <div className={['w-1.5 h-1.5 rounded-full flex-shrink-0',
+                      p.source==='anon' ? 'bg-success/70 animate-pulse' : 'bg-success',
+                    ].join(' ')}/>
+                    <span className={['flex-1 text-[11px] font-semibold truncate',
+                      isSelected ? 'text-accent' : 'text-text-primary',
+                    ].join(' ')}>{p.name}</span>
+                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse flex-shrink-0"/>}
+                  </button>
+                );
+              })}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {displayProviders.length === 0 && (
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
-          <Globe size={28} strokeWidth={1} className="text-muted/20"/>
-          <p className="text-sm text-muted/50">Loading providers…</p>
-        </div>
-      )}
+        {/* Needs key section */}
+        {needsKey.length > 0 && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-muted/40 mb-1.5 px-0.5">Add API Key to enable</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+              {needsKey.map(p => (
+                <button key={p.id} onClick={onManageKeys}
+                  className="flex items-center gap-2 px-2.5 py-2 rounded-xl border border-dashed border-border/30 bg-panel/20 opacity-50 hover:opacity-80 hover:border-accent/25 text-left transition-all">
+                  <div className="w-1.5 h-1.5 rounded-full bg-border flex-shrink-0"/>
+                  <span className="flex-1 text-[11px] text-muted/60 truncate">{p.name}</span>
+                  <ExternalLink size={8} className="text-muted/30 flex-shrink-0"/>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Model selector (appears when provider selected) */}
+        {selectedId && (
+          <div className="border-t border-border/30 pt-3 flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-muted/60">{curProvider?.name}</span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${TIER_BADGE[curProvider?.tier ?? 'free']?.cls ?? ''}`}>
+                {TIER_BADGE[curProvider?.tier ?? 'free']?.label}
+              </span>
+              {fetchingModels && <Loader2 size={10} className="text-accent/40 animate-spin ml-auto"/>}
+            </div>
+
+            {fetchingModels ? (
+              <div className="h-9 rounded-xl bg-base/60 border border-border/40 flex items-center px-3 gap-2">
+                <Loader2 size={12} className="text-muted/30 animate-spin"/>
+                <span className="text-[11px] text-muted/40">Loading models…</span>
+              </div>
+            ) : models.length > 0 ? (
+              <select value={selectedModel} onChange={e => selectModel(e.target.value)}
+                className="bg-base border border-border text-text-primary text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-accent/40 w-full">
+                {models.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : (
+              <p className="text-[11px] text-muted/40 italic py-1">
+                No models — add a key in <button onClick={onManageKeys} className="text-accent/70 hover:text-accent underline">Settings</button>
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button onClick={testModel} disabled={!selectedModel || testing || fetchingModels}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-xl border border-accent/20 text-accent/70 hover:border-accent/50 hover:text-accent transition-all disabled:opacity-30">
+                {testing ? <Loader2 size={10} className="animate-spin"/> : <FlaskConical size={10}/>}Test
+              </button>
+              <button onClick={activateBackend} disabled={!selectedModel || fetchingModels}
+                className="flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-bold rounded-xl bg-accent text-base btn-glow hover:brightness-110 transition-all disabled:opacity-40">
+                <Zap size={10}/>Use {selectedModel ? selectedModel.split('/').pop()?.slice(0,20) : 'model'}
+              </button>
+            </div>
+
+            {testResult && (
+              <div className={[
+                'px-3 py-2 rounded-xl border text-[10px] font-mono leading-snug',
+                testResult === 'ok' ? 'border-success/30 bg-success/5 text-success/80' : 'border-error/30 bg-error/5 text-error/70',
+              ].join(' ')}>
+                {testResult === 'ok' ? '✅ ' : '❌ '}{testReply}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -120,7 +120,13 @@ async function run() {
   // ── AUTH ────────────────────────────────────────────────────────────────────
   section('Auth');
 
-  r = await POST('/auth/login', { password: 'bkg_admin_2024' });
+  // Try install key first (first-run scenario), then fall back to default
+  const installKeyRes = await GET('/admin/install-key');
+  const adminPwd = (installKeyRes.status === 200 && installKeyRes.body?.key)
+    ? installKeyRes.body.key
+    : 'bkg_admin_2024';
+
+  r = await POST('/auth/login', { password: adminPwd });
   assert('POST /auth/login', r.status === 200 && typeof r.body?.token === 'string', r.raw);
   authToken = r.body?.token ?? '';
 

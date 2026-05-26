@@ -25,8 +25,9 @@ import { createServer } from 'http';
 import { spawn }        from 'child_process';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync, statSync } from 'fs';
 import { createHmac, randomBytes }   from 'crypto';
+import { homedir }      from 'os';
 
 // ── Load .env from project root ────────────────────────────────────────────────
 // Try to load a .env file two levels up from server/ (project root)
@@ -168,7 +169,60 @@ const HOST        = process.env.BKG_HOST              ?? process.env.HOST       
 const LLAMA_PORT  = parseInt(process.env.BKG_LLAMA_PORT ?? process.env.LLAMA_PORT ?? '8001',  10);
 const OLLAMA_PORT = parseInt(process.env.BKG_OLLAMA_PORT ?? process.env.OLLAMA_PORT ?? '11434', 10);
 const JWT_SECRET  = process.env.BKG_JWT_SECRET        ?? randomBytes(32).toString('hex');
-const ADMIN_HASH  = process.env.BKG_ADMIN_PASSWORD_HASH ?? '';
+
+// ── First-run admin password ──────────────────────────────────────────────────
+
+const BKG_DIR_ROOT = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+mkdirSync(BKG_DIR_ROOT, { recursive: true });
+
+const ADMIN_ENV_FILE   = join(BKG_DIR_ROOT, 'admin.env');
+const INSTALL_KEY_FILE = join(BKG_DIR_ROOT, 'install.key');  // plaintext, shown once
+
+let ADMIN_HASH = process.env.BKG_ADMIN_PASSWORD_HASH ?? '';
+
+// If no hash configured, generate one on first start
+let _installKeyPlaintext = '';   // held in memory, served once via /admin/install-key
+
+if (!ADMIN_HASH) {
+  // Load from .bkg/admin.env if it was generated before
+  if (existsSync(ADMIN_ENV_FILE)) {
+    const envLines = readFileSync(ADMIN_ENV_FILE, 'utf-8').split('\n');
+    for (const line of envLines) {
+      if (line.startsWith('BKG_ADMIN_PASSWORD_HASH=')) {
+        ADMIN_HASH = line.slice('BKG_ADMIN_PASSWORD_HASH='.length).trim();
+      }
+    }
+  }
+
+  // Still no hash → brand new install, generate a random password
+  if (!ADMIN_HASH) {
+    const { default: bcrypt } = await import('bcryptjs');
+    // Generate memorable password: bkg_ + 12 random hex chars
+    const finalPwd  = `bkg_${randomBytes(6).toString('hex')}`;
+    ADMIN_HASH      = await bcrypt.hash(finalPwd, 12);
+
+    // Persist hash
+    writeFileSync(ADMIN_ENV_FILE, `BKG_ADMIN_PASSWORD_HASH=${ADMIN_HASH}\n`);
+    // Store plaintext temporarily
+    writeFileSync(INSTALL_KEY_FILE, finalPwd);
+    _installKeyPlaintext = finalPwd;
+
+    console.log('\n' + '═'.repeat(62));
+    console.log('  bKG — FIRST RUN SETUP');
+    console.log('═'.repeat(62));
+    console.log('');
+    console.log(`  Admin password:  ${finalPwd}`);
+    console.log('');
+    console.log(`  Also saved to:   ${INSTALL_KEY_FILE}`);
+    console.log('');
+    console.log('  Visit /admin in your browser and enter this password.');
+    console.log('  Add it in the bKG Dashboard → "Set Admin Key" button.');
+    console.log('═'.repeat(62) + '\n');
+  } else if (existsSync(INSTALL_KEY_FILE)) {
+    // Hash loaded from file — install key may still be pending display
+    _installKeyPlaintext = readFileSync(INSTALL_KEY_FILE, 'utf-8').trim();
+  }
+}
 
 // ── Model server process management ──────────────────────────────────────────
 
@@ -310,6 +364,25 @@ app.post('/auth/hash', async (req, res) => {
   const bcrypt = await import('bcryptjs');
   const hash   = await bcrypt.default.hash(password, 12);
   res.json({ hash, hint: `Add to .env: BKG_ADMIN_PASSWORD_HASH=${hash}` });
+});
+
+/**
+ * GET /admin/install-key — return the generated install key ONE TIME.
+ * After reading, the plaintext file is deleted so it can't be fetched again.
+ * Only works when no admin session is established yet (first-run scenario).
+ */
+app.get('/admin/install-key', (_req, res) => {
+  if (!_installKeyPlaintext && !existsSync(INSTALL_KEY_FILE)) {
+    return res.json({ key: null, message: 'No pending install key' });
+  }
+
+  const key = _installKeyPlaintext || readFileSync(INSTALL_KEY_FILE, 'utf-8').trim();
+
+  // Deliver the key and delete the file — it's a one-time token
+  try { if (existsSync(INSTALL_KEY_FILE)) unlinkSync(INSTALL_KEY_FILE); } catch { /**/ }
+  _installKeyPlaintext = '';  // clear from memory too
+
+  res.json({ key, firstRun: true });
 });
 
 // ── /api-keys/* — API key management ─────────────────────────────────────────
@@ -2814,6 +2887,141 @@ app.post('/admin/user', (req, res) => {
   const { name } = req.body ?? {};
   const result = createUser(name || 'user');
   res.status(201).json({ ...result.user, rawKey: result.rawKey, warning: 'Store this key securely.' });
+});
+
+/** GET /admin/users — list all user profiles */
+
+// ── /admin/db/* — SQLite DB Viewer ───────────────────────────────────────────
+
+/**
+ * GET /admin/db/databases — list all known SQLite databases
+ */
+app.get('/admin/db/databases', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const BKG_DIR = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+  const databases = [
+    { id: 'flow',   label: 'Flow Board',    path: join(BKG_DIR, 'flow-default.db') },
+    { id: 'users',  label: 'Users & Keys',  path: join(BKG_DIR, 'users', 'globals.json') },
+  ];
+  // Check which exist
+  const existing = databases.map(db => ({
+    ...db,
+    exists: existsSync(db.path),
+    size:   existsSync(db.path) ? (() => { try { return statSync(db.path).size; } catch { return 0; } })() : 0,
+  }));
+  res.json({ databases: existing });
+});
+
+/**
+ * GET /admin/db/:dbId/tables — list tables + row counts
+ */
+app.get('/admin/db/:dbId/tables', async (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const BKG_DIR = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+
+  const DB_PATHS = {
+    flow: join(BKG_DIR, 'flow-default.db'),
+  };
+
+  const dbPath = DB_PATHS[req.params.dbId];
+  if (!dbPath) return res.status(404).json({ error: 'Database not found' });
+  if (!existsSync(dbPath)) return res.status(404).json({ error: 'Database file not found', path: dbPath });
+
+  try {
+    const { default: Db } = await import('better-sqlite3').catch(() => ({ default: null }));
+    if (!Db) return res.status(503).json({ error: 'SQLite not available' });
+
+    const db     = new Db(dbPath, { readonly: true, verbose: null });
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all();
+    const result = tables.map(({ name }) => {
+      try {
+        const count = db.prepare(`SELECT COUNT(*) AS c FROM "${name}"`).get();
+        const cols  = db.prepare(`PRAGMA table_info("${name}")`).all();
+        return { name, rows: count.c, columns: cols.map(c => c.name) };
+      } catch { return { name, rows: 0, columns: [] }; }
+    });
+    db.close();
+    res.json({ dbId: req.params.dbId, tables: result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /admin/db/:dbId/table/:table — query rows from a table
+ * Query: ?limit=50&offset=0&search=
+ */
+app.get('/admin/db/:dbId/table/:table', async (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const BKG_DIR  = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+  const DB_PATHS = { flow: join(BKG_DIR, 'flow-default.db') };
+
+  const dbPath = DB_PATHS[req.params.dbId];
+  if (!dbPath || !existsSync(dbPath)) return res.status(404).json({ error: 'Database not found' });
+
+  const limit  = Math.min(200, parseInt(req.query.limit ?? '50', 10));
+  const offset = parseInt(req.query.offset ?? '0', 10);
+  const search = req.query.search?.toString() ?? '';
+  const table  = req.params.table.replace(/[^a-zA-Z0-9_]/g, '');  // sanitise
+
+  try {
+    const { default: Db } = await import('better-sqlite3').catch(() => ({ default: null }));
+    if (!Db) return res.status(503).json({ error: 'SQLite not available' });
+
+    const db   = new Db(dbPath, { readonly: true, verbose: null });
+    const cols = db.prepare(`PRAGMA table_info("${table}")`).all().map(c => c.name);
+
+    let rows, total;
+    if (search && cols.length > 0) {
+      // Search across all text columns
+      const likeClause = cols.map(c => `CAST("${c}" AS TEXT) LIKE ?`).join(' OR ');
+      const pat = `%${search}%`;
+      const params = cols.map(() => pat);
+      total = db.prepare(`SELECT COUNT(*) AS c FROM "${table}" WHERE ${likeClause}`).get(...params).c;
+      rows  = db.prepare(`SELECT * FROM "${table}" WHERE ${likeClause} LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    } else {
+      total = db.prepare(`SELECT COUNT(*) AS c FROM "${table}"`).get().c;
+      rows  = db.prepare(`SELECT * FROM "${table}" LIMIT ? OFFSET ?`).all(limit, offset);
+    }
+    db.close();
+    res.json({ table, columns: cols, rows, total, limit, offset });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /admin/db/:dbId/query — run a read-only SQL query
+ * Body: { sql }
+ */
+app.post('/admin/db/:dbId/query', async (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const BKG_DIR  = process.env.BKG_DIR ?? join(homedir(), '.bkg');
+  const DB_PATHS = { flow: join(BKG_DIR, 'flow-default.db') };
+
+  const dbPath = DB_PATHS[req.params.dbId];
+  if (!dbPath || !existsSync(dbPath)) return res.status(404).json({ error: 'Database not found' });
+
+  const { sql } = req.body ?? {};
+  if (!sql) return res.status(400).json({ error: 'sql required' });
+
+  // Security: only allow SELECT statements
+  const trimmed = sql.trim().toUpperCase();
+  if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('WITH') && !trimmed.startsWith('PRAGMA')) {
+    return res.status(403).json({ error: 'Only SELECT, WITH, and PRAGMA queries are allowed' });
+  }
+
+  try {
+    const { default: Db } = await import('better-sqlite3').catch(() => ({ default: null }));
+    if (!Db) return res.status(503).json({ error: 'SQLite not available' });
+
+    const db   = new Db(dbPath, { readonly: true, verbose: null });
+    const rows = db.prepare(sql).all();
+    db.close();
+    res.json({ rows, count: rows.length });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 /** GET /admin/users — list all user profiles */
