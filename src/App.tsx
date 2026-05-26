@@ -11,6 +11,8 @@ import { CodeStudio }            from '@/components/CodeStudio/CodeStudio';
 import { AgentHub }              from '@/components/AgentHub/AgentHub';
 import { FlowBoard }             from '@/components/Flow/FlowBoard';
 import { GameWizard }            from '@/components/Game/GameWizard';
+import { GameClient }            from '@/components/Game/GameClient';
+import { WorldBuilder }          from '@/components/Game/WorldBuilder';
 import { VoxelEngine }           from '@/components/Voxel/VoxelEngine';
 import { MMOEngine }             from '@/components/MMO/MMOEngine';
 import { useAppState }           from '@/context/AppContext';
@@ -38,6 +40,8 @@ function StageView() {
     case 'agenthub':  return <AgentHub/>;
     case 'flow':      return <FlowBoard/>;
     case 'game':      return <GameWizard/>;
+    case 'game-client':   return <GameClient/>;
+    case 'world-builder': return <WorldBuilder/>;
     case 'voxel':     return <VoxelEngine/>;
     case 'mmo':       return <MMOEngine/>;
     default:          return (

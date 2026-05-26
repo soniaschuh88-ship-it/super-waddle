@@ -25,10 +25,11 @@ import { PluginManager }       from './PluginManager';
 import { ApiKeys }             from './ApiKeys';
 import { GlobalProviders }     from './GlobalProviders';
 import { DbViewer }             from './DbViewer';
+import { MMOCreator }           from './MMOCreator';
 import { useAppState }         from '@/context/AppContext';
 
 type Tab = 'agent' | 'apikeys' | 'globals' | 'plugins' | 'servers' | 'models' |
-           'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings' | 'db';
+           'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings' | 'db' | 'mmo';
 
 interface TabDef {
   id:      Tab;
@@ -55,6 +56,7 @@ const TABS: TabDef[] = [
   { id:'webllm',     label:'WebLLM Cache',      icon:HardDrive,   mode:'private', section:'local'   },
   { id:'embeddings', label:'Embeddings Lab',    icon:FlaskConical,                 section:'local'   },
   { id:'db',         label:'DB Viewer',         icon:Database,                     section:'general' },
+  { id:'mmo',        label:'Game Blueprints',   icon:Globe,        mode:'cloud',   section:'general' },
 ];
 
 const SECTION_LABELS = {
@@ -343,6 +345,7 @@ export function AdminApp() {
             {tab === 'webllm'     && <WebLLMCache/>}
             {tab === 'settings'   && <AISettings/>}
             {tab === 'db'         && <DbViewer/>}
+            {tab === 'mmo'        && <MMOCreator/>}
           </div>
         </main>
       </div>

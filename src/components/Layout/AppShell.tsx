@@ -134,11 +134,13 @@ function MobileDrawer({ open, onClose, stage, onNav, mode, onMode }: DrawerProps
   const NAV_ITEMS = [
     { id: 'home',     icon: LayoutDashboard, label: 'Dashboard',   color: undefined   },
     { id: 'stufe1',   icon: Plus,            label: 'New Plan',    color: undefined   },
-    { id: 'agenthub', icon: Bot,             label: 'Agents',      color: undefined   },
-    { id: 'flow',     icon: Zap,             label: 'Flow Board',  color: undefined   },
-    { id: 'game',     icon: Gamepad2,        label: 'Game Studio', color: '#ffb300'   },
-    { id: 'voxel',    icon: Layers,          label: 'Voxel World', color: undefined   },
-    { id: 'mmo',      icon: Globe,           label: 'MMO Engine',  color: '#00e5a0'   },
+    { id: 'agenthub',     icon: Bot,      label: 'Agents',       color: undefined   },
+    { id: 'flow',         icon: Zap,      label: 'Flow Board',   color: undefined   },
+    { id: 'game',         icon: Gamepad2, label: 'Game Studio',  color: '#ffb300'   },
+    { id: 'game-client',  icon: Globe,    label: 'Game Client',  color: '#00e5a0'   },
+    { id: 'world-builder',icon: Layers,   label: 'World Builder',color: '#00e5ff'   },
+    { id: 'voxel',        icon: Layers,   label: 'Voxel World',  color: undefined   },
+    { id: 'mmo',          icon: Globe,    label: 'MMO Engine',   color: '#00e5a0'   },
   ];
 
   return (
@@ -283,7 +285,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       />
 
       {/* ── Header ── */}
-      <header className="glass flex-shrink-0 h-14 flex items-center px-3 sm:px-5 gap-3 z-30 relative">
+      <header className="glass flex-shrink-0 h-14 flex items-center z-30 relative">
+        <div className="w-full max-w-[1800px] mx-auto px-3 sm:px-5 flex items-center gap-3">
 
         {/* Mobile hamburger */}
         <button
@@ -334,13 +337,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 
             {/* Nav items — data-driven, compact */}
             {([
-              { id: 'home',     Icon: LayoutDashboard, label: 'Dashboard', accent: '#00e5ff' },
-              { id: 'agenthub', Icon: Bot,             label: 'Agents',    accent: '#00e5ff' },
-              { id: 'flow',     Icon: Zap,             label: 'Flow',      accent: '#00e5ff' },
-              { id: 'game',     Icon: Gamepad2,        label: 'Game',      accent: '#ffb300' },
-              { id: 'voxel',    Icon: Layers,          label: 'Voxel',     accent: '#00e5ff' },
-              { id: 'mmo',      Icon: Globe,           label: 'MMO',       accent: '#00e5a0' },
-              { id: 'admin',    Icon: Settings,        label: 'Admin',     accent: '#00e5ff', href: '/admin' },
+              { id: 'home',         Icon: LayoutDashboard, label: 'Dashboard',    accent: '#00e5ff' },
+              { id: 'agenthub',     Icon: Bot,             label: 'Agents',       accent: '#00e5ff' },
+              { id: 'flow',         Icon: Zap,             label: 'Flow',         accent: '#00e5ff' },
+              { id: 'game',         Icon: Gamepad2,        label: 'Game',         accent: '#ffb300' },
+              { id: 'game-client',  Icon: Globe,           label: 'Game Client',  accent: '#00e5a0' },
+              { id: 'world-builder',Icon: Layers,          label: 'World',        accent: '#00e5ff' },
+              { id: 'voxel',        Icon: Layers,          label: 'Voxel',        accent: '#00e5ff' },
+              { id: 'mmo',          Icon: Globe,           label: 'MMO',          accent: '#00e5a0' },
+              { id: 'admin',        Icon: Settings,        label: 'Admin',        accent: '#00e5ff', href: '/admin' },
             ] as Array<{ id: string; Icon: typeof Globe; label: string; accent: string; href?: string }>).map(({ id, Icon, label, accent, href }) => {
               const active  = state.stage === id;
               const onClick = href ? undefined : () => goStage(id);
@@ -366,7 +371,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
-        </div>
+        </div>{/* /right controls */}
+        </div>{/* /inner wrapper */}
       </header>
 
       {/* Mobile mode bar */}

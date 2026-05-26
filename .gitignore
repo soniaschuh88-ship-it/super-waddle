@@ -8,3 +8,4 @@ dist/
 .icadp/logs/
 # Loaded config (keep example, ignore actual)
 .icadp.env
+.bkg/

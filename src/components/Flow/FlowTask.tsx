@@ -361,12 +361,12 @@ export function FlowTask({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6"
+      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center px-3 sm:px-4 py-3 sm:py-6 overflow-y-auto"
       style={{ background: 'rgba(3,8,16,0.88)', backdropFilter: 'blur(8px)' }}
       onClick={e => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="relative flex flex-col w-full max-w-2xl max-h-[90vh] rounded-2xl border overflow-hidden shadow-2xl"
+        className="relative flex flex-col w-full max-w-2xl max-h-[95vh] rounded-2xl border overflow-hidden shadow-2xl my-auto"
         style={{
           background: 'linear-gradient(135deg, rgba(9,22,40,0.98) 0%, rgba(6,15,30,0.99) 100%)',
           borderColor: `${statusCol}30`,
