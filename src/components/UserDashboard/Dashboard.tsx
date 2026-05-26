@@ -335,6 +335,29 @@ function ProjectRow({ project, onOpen }: { project: Project; onOpen: () => void 
   );
 }
 
+// ── E9: User key chip ─────────────────────────────────────────────────────────
+
+function UserKeyChip() {
+  const raw = localStorage.getItem('bkg_user_api_key');
+  if (!raw) return null;
+  const prefix = raw.slice(0, 16);
+  return (
+    <div className="flex items-center justify-between px-3 py-2 rounded-xl border border-border/30 bg-panel/30 mt-2">
+      <div className="flex items-center gap-2 text-[11px] text-muted/50 font-mono">
+        <div className="w-1.5 h-1.5 rounded-full bg-success/60"/>
+        {prefix}…
+        <span className="text-muted/30">bKG API key</span>
+      </div>
+      <button
+        onClick={() => window.dispatchEvent(new Event('bkg:show-onboarding'))}
+        className="text-[10px] text-accent/50 hover:text-accent transition-colors"
+      >
+        Re-run setup
+      </button>
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export function Dashboard({
@@ -674,6 +697,9 @@ export function Dashboard({
             </button>
           </div>
         )}
+
+        {/* E9 — API key chip + re-run onboarding */}
+        <UserKeyChip/>
       </div>
     </div>
   );
