@@ -334,3 +334,73 @@ code, .font-mono {
 /* Ensure text is always visible over dark backgrounds */
 .text-text-primary { color: #e8f4f8 !important; }
 .text-accent       { color: #00e5ff !important; }
+
+/* ── Alpha-release polish ──────────────────────────────────────────────────── */
+
+/* All clickable elements should show pointer */
+[role=button], button:not(:disabled), .cursor-pointer { cursor: pointer !important; }
+a[href]           { cursor: pointer; }
+
+/* Focus rings — accessible but styled */
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid rgba(0,229,255,0.5);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Drag ghost image for kanban cards */
+[draggable=true] { user-select: none; }
+[draggable=true]:active { cursor: grabbing !important; }
+
+/* Toast/flash messages */
+.toast-enter { animation: slideIn 0.3s ease-out; }
+
+/* Input autofill colour override (browser default is ugly) */
+input:-webkit-autofill,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #030810 inset !important;
+  -webkit-text-fill-color: #e8f4f8 !important;
+}
+
+/* Canvas elements */
+canvas:focus { outline: none; }
+
+/* Loading skeleton pulse */
+.skeleton {
+  background: linear-gradient(90deg, rgba(13,42,64,0.6) 25%, rgba(0,229,255,0.05) 50%, rgba(13,42,64,0.6) 75%);
+  background-size: 200% 100%;
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+}
+@keyframes skeletonPulse {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Pill badge for status */
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 100px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  backdrop-filter: blur(8px) saturate(1.2);
+  background: rgba(3,8,16,0.7);
+}
+
+/* Divider */
+.divider-glow {
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(0,229,255,0.15) 50%, transparent 100%);
+}
+
+/* Chart / graph grid lines */
+.grid-line { stroke: rgba(13,42,64,0.8); stroke-width: 1; stroke-dasharray: 4 4; }
+
+/* Status dots */
+.dot-online  { width: 7px; height: 7px; border-radius: 50%; background: #00e5a0; box-shadow: 0 0 6px #00e5a0; }
+.dot-offline { width: 7px; height: 7px; border-radius: 50%; background: #ff3d6b; }
+.dot-pending { width: 7px; height: 7px; border-radius: 50%; background: #ffb300; animation: pulse 1s infinite; }
+

@@ -152,6 +152,8 @@ import { ChaosRecoveryKernel, peerTrustScore, CHAOS } from './chaos-recovery.js'
 import { getTimeline, listTimelines, speculativeStats } from './speculative-replay.js';
 import { StateHealer, crc32, ledgerCRC, HEAL_LEVEL_NAME } from './state-healer.js';
 import { ZoneStitcher, analyzeZoneConnectivity }         from './zone-stitcher.js';
+import { renderPartition, assignTiles, GRID_COLS, GRID_ROWS, GPU_BUDGET } from './render-partition.js';
+import { compositor }                                    from './compositing-serverless.js';
 
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
@@ -1725,6 +1727,69 @@ app.get('/mmo/ws-info', (_req, res) => {
   });
 });
 
+// ── /mmo/render/* — VRDL Render Distribution Layer ───────────────────────────
+
+/** GET /mmo/render/config — tile grid, GPU budget config */
+app.get('/mmo/render/config', (_req, res) => {
+  res.json({ gridCols: GRID_COLS, gridRows: GRID_ROWS, tileCount: GRID_COLS * GRID_ROWS, gpuBudget: GPU_BUDGET });
+});
+
+/** GET /mmo/render/tiles — current tile grid with cost + assignment */
+app.get('/mmo/render/tiles', (_req, res) => res.json(renderPartition.snapshot()));
+
+/** GET /mmo/render/assignment — current full assignment map */
+app.get('/mmo/render/assignment', (_req, res) => res.json({ assignment: renderPartition.getAssignmentMap() }));
+
+/** GET /mmo/render/assignment/:peerId — tiles assigned to a specific peer */
+app.get('/mmo/render/assignment/:peerId', (req, res) => {
+  const tiles = renderPartition.getPeerAssignment(req.params.peerId);
+  res.json({ peerId: req.params.peerId, tiles });
+});
+
+/** POST /mmo/render/rebalance — force tile reassignment */
+app.post('/mmo/render/rebalance', (_req, res) => {
+  const assignment = renderPartition.rebalance();
+  compositor.broadcastAssignment(renderPartition.getAssignmentMap());
+  res.json({ ok: true, assignment: Object.fromEntries(assignment ?? []) });
+});
+
+/**
+ * POST /mmo/render/frame — peer submits a rendered tile frame (metadata)
+ * Body: { peerId, tileId, seq, bytes, encoding?, hash? }
+ * Pixel data travels P2P; server only tracks metadata.
+ */
+app.post('/mmo/render/frame', (req, res) => {
+  const { peerId, tileId, seq, bytes, encoding = 'raw', hash } = req.body ?? {};
+  if (!peerId || !tileId) return res.status(400).json({ error: 'peerId + tileId required' });
+  const accepted = compositor.recordTileFrame({ peerId, tileId, seq: +seq || 0, bytes: +bytes || 0, encoding, hash });
+  res.json({ accepted, tileId });
+});
+
+/** GET /mmo/render/frame/summary — current frame composition status */
+app.get('/mmo/render/frame/summary', (_req, res) => res.json(compositor.getFrameSummary()));
+
+/** GET /mmo/render/compositor — full compositor snapshot */
+app.get('/mmo/render/compositor', (_req, res) => res.json(compositor.snapshot()));
+
+/**
+ * POST /mmo/render/npc — assign NPC rendering to nearest render peer
+ * Body: { npcs: [{id,wx,wy,wz}], zoneId }
+ */
+app.post('/mmo/render/npc', (req, res) => {
+  const { npcs = [], zoneId = '0:0:0' } = req.body ?? {};
+  const assignments = compositor.assignNPCRendering(npcs, zoneId);
+  res.json({ ok: true, assignments: assignments ?? [], npcStats: compositor.npcAssigner.stats() });
+});
+
+/**
+ * POST /mmo/render/world-snapshot — update world complexity hint for cost model
+ * Body: { trianglesInView, lightsInView, entitiesInView, dirtyVoxels }
+ */
+app.post('/mmo/render/world-snapshot', (req, res) => {
+  renderPartition.updateWorldSnapshot(req.body ?? {});
+  res.json({ ok: true, avgCost: renderPartition.metrics.avgCost });
+});
+
 // ── /mmo/chaos/* — Chaos Recovery Kernel ─────────────────────────────────────
 
 /** GET /mmo/chaos/stats — overall chaos detection + recovery stats */
@@ -1836,9 +1901,8 @@ app.post('/mmo/chaos/healer/checkpoint', async (req, res) => {
   const { worldId='default', zoneId } = req.body ?? {};
   if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
 
-  const cluster = defaultMgr.clusters.get(zoneId);
-  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
-
+  // Auto-create cluster if it doesn't exist (required for checkpointing)
+  const cluster = defaultMgr.getCluster(zoneId);
   const crc = stateHealer.checkpoint(cluster.ledger);
   res.json({ ok: true, zoneId, crc });
 });
@@ -1851,10 +1915,8 @@ app.post('/mmo/chaos/healer/verify', async (req, res) => {
   const { worldId='default', zoneId } = req.body ?? {};
   if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
 
-  const cluster = defaultMgr.clusters.get(zoneId);
-  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
-
-  const result = stateHealer.verify(cluster.ledger);
+  const cluster = defaultMgr.getCluster(zoneId);
+  const result  = stateHealer.verify(cluster.ledger);
   res.json({ zoneId, ...result });
 });
 
@@ -1866,8 +1928,7 @@ app.post('/mmo/chaos/healer/heal', async (req, res) => {
   const { worldId='default', zoneId } = req.body ?? {};
   if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
 
-  const cluster = defaultMgr.clusters.get(zoneId);
-  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
+  const cluster = defaultMgr.getCluster(zoneId);  // auto-create if missing
 
   try {
     const result = await stateHealer.heal(cluster.ledger, worldId);
@@ -2648,6 +2709,12 @@ const stateHealer  = new StateHealer(defaultMgr, null);
 const zoneStitcher = new ZoneStitcher(defaultMgr).start();
 stateHealer.start();
 chaosKernel.injectDeps({ bandwidthShaper });
+
+// ── VRDL: start compositor and initial tile assignment ──────────────────────
+setTimeout(() => {
+  renderPartition.rebalance();
+  compositor.broadcastAssignment(renderPartition.getAssignmentMap());
+}, 2000);  // brief delay so peers can join
 
 // Start bandwidth shaper — delivers queued messages via WebSocket
 bandwidthShaper.start((peerId, messages) => {

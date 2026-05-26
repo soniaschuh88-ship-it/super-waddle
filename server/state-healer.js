@@ -277,16 +277,31 @@ export class StateHealer extends EventEmitter {
 
   _regenerate(ledger) {
     try {
-      // Full reduce from all stored events
       const events = ledger.events ?? [];
       if (!events.length) return { success: false, reason: 'no_events' };
 
-      // Call the VSL deterministic reducer
-      const { reduce } = require('./vsl-reducer.js');  // dynamic import for circularity avoidance
-      const result = reduce(events, ledger.zoneId, ledger.tick, ledger.authority.peers);
-      ledger.voxelMap  = result.voxelMap;
-      ledger.stateHash = result.stateHash;
-      return { success: true, eventsReplayed: events.length, stateHash: result.stateHash };
+      // Inline deterministic LWW reduce — mirrors vsl-reducer.js without import
+      const voxelMap = new Map();
+      const sorted   = [...events].sort((a, b) => a.tick - b.tick || a.sig?.localeCompare(b.sig ?? '') || 0);
+      for (const e of sorted) {
+        if (!e.chunkId) continue;
+        const key      = `${e.chunkId}:${e.lx ?? 0}:${e.ly ?? 0}:${e.lz ?? 0}`;
+        const existing = voxelMap.get(key);
+        if (!existing || e.tick > existing.tick ||
+            (e.tick === existing.tick && (e.sig ?? '') > (existing.sig ?? ''))) {
+          voxelMap.set(key, { value: e.value ?? 0, tick: e.tick, sig: e.sig, actor: e.actor, auth: 1 });
+        }
+      }
+      // Deterministic state hash from sorted entries
+      const stateHash = [...voxelMap.entries()]
+        .sort(([a], [b]) => a < b ? -1 : 1)
+        .map(([k, v]) => `${k}:${v.value}`)
+        .join('|')
+        .slice(0, 64) || '(empty)';
+
+      ledger.voxelMap  = voxelMap;
+      ledger.stateHash = stateHash;
+      return { success: true, eventsReplayed: events.length, stateHash };
     } catch (e) {
       return { success: false, reason: e.message };
     }

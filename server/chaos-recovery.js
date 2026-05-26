@@ -334,8 +334,9 @@ export class ChaosRecoveryKernel extends EventEmitter {
   _recoverDropout(evt, cluster) {
     evt.strategy = 'promote_backup';
 
-    const backupId = this.mgr.rebalancer?.clusters?.get?.(cluster.zoneId)?.backupNode
-      ?? cluster.peers?.[0]?.id;
+    // Use peerRegistry cluster roles, or fall back to second peer by join order
+    const clusterRoles = peerRegistry.getCluster(cluster.zoneId);
+    const backupId = clusterRoles?.backupNode ?? cluster.peers?.[1]?.id ?? cluster.peers?.[0]?.id;
 
     if (backupId && backupId !== evt.data.droppedPeer) {
       // Promote backup by rebalancing roles
