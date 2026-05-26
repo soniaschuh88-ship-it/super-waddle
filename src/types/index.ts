@@ -1,6 +1,7 @@
 // ICADP 3.0 – Core Type Definitions
 
-export type Stage = 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3';
+/** The five top-level stages. 'home' is the landing dashboard. */
+export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3';
 export type Stufe1Step = 'idea' | 'features' | 'generating';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error';
 /** Inference backend selection.

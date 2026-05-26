@@ -5,7 +5,7 @@ import type { AppAction, AppState, BackendConfig, BundleFileName, GeneratedBundl
 export const DEFAULT_BACKEND: BackendConfig = { type: 'webgpu', serverUrl: 'http://localhost:8001', modelId: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC' };
 
 const initialState: AppState = {
-  stage: 'stufe1', stufe1Step: 'idea',
+  stage: 'home', stufe1Step: 'idea',
   project: null, editableBundle: null, modifiedFiles: new Set<BundleFileName>(),
   backendConfig: DEFAULT_BACKEND,
   engineStatus: 'idle', engineProgress: { progress: 0, text: '' },
