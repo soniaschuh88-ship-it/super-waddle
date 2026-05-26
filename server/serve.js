@@ -358,7 +358,8 @@ app.post('/api-keys/self-register', (req, res) => {
   _selfRegCounts.set(ip, [ts, count + 1]);
 
   const { name } = req.body ?? {};
-  const { key, stored } = createApiKey(name || 'user', 'inference');
+  // Give self-registered users 'agent' scope so they can use both inference + agent routes
+  const { key, stored } = createApiKey(name || 'user', 'agent');
   res.status(201).json({
     key,
     id:     stored.id,
@@ -519,13 +520,20 @@ app.get('/api/systemd-units', (_req, res) => {
 });
 
 // ── /agent/* — coding agent ───────────────────────────────────────────────────
+//
+// Protected: requires a valid API key (scope: agent or admin) OR admin JWT.
+// Use POST /api-keys/self-register to get an inference key, or
+// POST /api-keys (admin) to create one with scope 'agent'.
+
+// inference scope = general user key from self-register; agent = explicit grant; admin = full access
+const agentAuth = requireApiKey('inference', 'agent', 'admin');
 
 /**
  * POST /agent/session
  * Start a new agent session.
  * Body: { cwd?, systemPrompt?, tools?, initialMessage? }
  */
-app.post('/agent/session', async (req, res) => {
+app.post('/agent/session', agentAuth, async (req, res) => {
   try {
     const result = await startSession(req.body ?? {});
     res.json(result);
@@ -539,7 +547,7 @@ app.post('/agent/session', async (req, res) => {
  * SSE stream of all events for a session.
  * After=N query param: skip first N buffered events (for reconnect).
  */
-app.get('/agent/session/:id/events', (req, res) => {
+app.get('/agent/session/:id/events', agentAuth, (req, res) => {
   subscribeSSE(req.params.id, req, res);
 });
 
@@ -547,7 +555,7 @@ app.get('/agent/session/:id/events', (req, res) => {
  * GET /agent/session/:id/poll?after=N
  * Long-poll alternative to SSE — returns new events since index N.
  */
-app.get('/agent/session/:id/poll', (req, res) => {
+app.get('/agent/session/:id/poll', agentAuth, (req, res) => {
   const after  = parseInt(req.query.after ?? '0', 10);
   const events = getSessionEvents(req.params.id, after);
   if (events === null) return res.status(404).json({ error: 'Session not found' });
@@ -559,7 +567,7 @@ app.get('/agent/session/:id/poll', (req, res) => {
  * Send a user message to the running agent.
  * Body: { text: string }
  */
-app.post('/agent/session/:id/message', async (req, res) => {
+app.post('/agent/session/:id/message', agentAuth, async (req, res) => {
   const { text } = req.body ?? {};
   if (!text) return res.status(400).json({ error: 'text is required' });
   try {
@@ -574,7 +582,7 @@ app.post('/agent/session/:id/message', async (req, res) => {
  * POST /agent/session/:id/abort
  * Abort the current agent turn.
  */
-app.post('/agent/session/:id/abort', (req, res) => {
+app.post('/agent/session/:id/abort', agentAuth, (req, res) => {
   abortSession(req.params.id);
   res.json({ ok: true });
 });
@@ -583,7 +591,7 @@ app.post('/agent/session/:id/abort', (req, res) => {
  * DELETE /agent/session/:id
  * Dispose a session (cleans up memory).
  */
-app.delete('/agent/session/:id', (req, res) => {
+app.delete('/agent/session/:id', agentAuth, (req, res) => {
   disposeSession(req.params.id);
   res.json({ ok: true });
 });
@@ -592,7 +600,7 @@ app.delete('/agent/session/:id', (req, res) => {
  * GET /agent/sessions
  * List active sessions.
  */
-app.get('/agent/sessions', (_req, res) => {
+app.get('/agent/sessions', agentAuth, (_req, res) => {
   res.json(listSessions());
 });
 
