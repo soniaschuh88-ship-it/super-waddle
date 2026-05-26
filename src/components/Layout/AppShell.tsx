@@ -436,8 +436,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto min-h-0 relative">
+      {/* Main content — padded on mobile to avoid bottom tab bar overlap */}
+      <main className="flex-1 overflow-auto min-h-0 relative pb-[56px] sm:pb-0">
         {children}
       </main>
 
@@ -450,6 +450,55 @@ export function AppShell({ children }: { children: ReactNode }) {
         mode={mode}
         onMode={toggleMode}
       />
+
+      {/* E16 — Mobile bottom tab bar (sm:hidden) ─────────────────────────────── */}
+      <nav
+        className="sm:hidden fixed bottom-0 left-0 right-0 z-30 flex items-stretch"
+        style={{
+          height: '56px',
+          background: 'rgba(3,8,16,0.97)',
+          backdropFilter: 'blur(20px)',
+          borderTop: '1px solid rgba(0,229,255,0.08)',
+          paddingBottom: 'env(safe-area-inset-bottom,0px)',
+        }}
+      >
+        {([
+          { id:'home',        Icon:LayoutDashboard, label:'Home',  accent:'#00e5ff' },
+          { id:'flow',        Icon:Zap,             label:'Flow',  accent:'#00e5ff' },
+          { id:'game',        Icon:Gamepad2,        label:'Game',  accent:'#ffb300' },
+          { id:'game-client', Icon:Globe,           label:'Worlds',accent:'#00e5a0' },
+          { id:'voxel',       Icon:Layers,          label:'Voxel', accent:'#00e5ff' },
+        ] as Array<{ id:string; Icon:typeof Globe; label:string; accent:string }>).map(({ id, Icon, label, accent }) => {
+          const active = state.stage === id;
+          return (
+            <button
+              key={id}
+              onClick={() => goStage(id)}
+              className="flex-1 flex flex-col items-center justify-center gap-0.5 transition-all active:scale-95"
+              style={{ color: active ? accent : '#4a6880' }}
+            >
+              <div className="relative">
+                <Icon size={18} style={{ color: active ? accent : undefined }}/>
+                {active && (
+                  <div
+                    className="absolute -inset-1.5 rounded-full opacity-20 blur-sm"
+                    style={{ background: accent }}
+                  />
+                )}
+              </div>
+              <span className="text-[9px] font-semibold tracking-wide" style={{ color: active ? accent : '#4a6880' }}>
+                {label}
+              </span>
+              {active && (
+                <div
+                  className="absolute bottom-0 h-0.5 w-8 rounded-full"
+                  style={{ background: accent, boxShadow: `0 0 8px ${accent}` }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </nav>
 
       {/* Bottom ambient glow */}
       <div
