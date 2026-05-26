@@ -23,7 +23,7 @@ import {
   Globe, Users, Shield, Bot,
   Link2, FlaskConical, RefreshCw,
   Wifi, WifiOff, Zap, Activity,
-  Play, Pause, AlertTriangle, Sliders, Skull,
+  Play, Pause, AlertTriangle, Sliders, Skull, Monitor,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ interface DeltaEvent {
   mat?: number; src?: string; ts: number;
 }
 
-type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm' | 'stable' | 'chaos';
+type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm' | 'stable' | 'chaos' | 'render';
 
 const ROLE_COLOR: Record<string, string> = {
   sim:    '#00e5ff',
@@ -261,6 +261,14 @@ export function MMOEngine() {
     trust?:      Array<{ id: string; score: number; role: string; latency: number }>;
     history?:    Array<{ type: string; zoneId: string; recovered: boolean; strategy: string|null; ts: number }>;
   }>({});
+
+  const [renderData, setRenderData] = useState<{
+    tiles?:   Array<{ id: string; col: number; row: number; cost: number; lod: number; peer: string|null; frameAge: number|null }>;
+    metrics?: { rebalances: number; framesRecv: number; tilesMissed: number; avgFrameMs: number; avgCost: number };
+    assignment?: Record<string, string[]>;
+    frame?:   { complete: boolean; qualityMap: string[]; avgAgeMs: number };
+    npcAssigner?: { totalNPCs: number; renderPeers: number };
+  }>({});
   const [npcs,       setNPCs]       = useState<NPC[]>([]);
   const [deltaLog,   setDeltaLog]   = useState<DeltaEvent[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -353,6 +361,23 @@ export function MMOEngine() {
     } catch { /**/ }
   };
 
+  const loadRender = async () => {
+    try {
+      const [tiles, frame] = await Promise.all([
+        api.get<Record<string, unknown>>('/mmo/render/tiles').catch(() => null),
+        api.get<Record<string, unknown>>('/mmo/render/frame/summary').catch(() => null),
+      ]);
+      if (tiles) {
+        setRenderData({
+          tiles:       tiles.tiles      as typeof renderData.tiles,
+          metrics:     tiles.metrics    as typeof renderData.metrics,
+          assignment:  tiles.assignment as typeof renderData.assignment,
+          frame:       frame            as typeof renderData.frame,
+        });
+      }
+    } catch { /**/ }
+  };
+
   useEffect(() => {
     void refresh();
     const iv = setInterval(refresh, 3000);
@@ -365,6 +390,7 @@ export function MMOEngine() {
     if (panel === 'npcs')   void loadNPCs();
     if (panel === 'stable') void loadKernel();
     if (panel === 'chaos')  void loadChaos();
+    if (panel === 'render') void loadRender();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panel]);
 
@@ -417,6 +443,7 @@ export function MMOEngine() {
     { id: 'farm',      label: 'Farm',     Icon: FlaskConical},
     { id: 'stable',    label: 'Kernel',   Icon: Sliders     },
     { id: 'chaos',     label: 'Chaos',    Icon: Skull       },
+    { id: 'render',    label: 'VRDL',     Icon: Monitor     },
   ];
 
   const ACCENT = '#00e5ff';
@@ -1151,6 +1178,112 @@ fragmentation → assign idle peer to simulate orphaned zone
 forward merge → patch diverged voxels only, no rollback, no jump
 state heal    → CRC32 → partial patch → L3 event log replay
 zone stitch   → predict 3s ahead → prefetch → seam smooth`}</pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── VRDL Render Distribution panel ── */}
+        {panel === 'render' && (
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex flex-col gap-5 max-w-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-text-primary" style={{ fontFamily:"'Orbitron',sans-serif" }}>
+                    Voxel Render Distribution Layer
+                  </h2>
+                  <p className="text-xs text-muted/50 mt-1">
+                    Each peer renders only assigned screen tiles. Frames composed P2P — no central renderer.
+                  </p>
+                </div>
+                <div className="flex gap-1.5">
+                  <button onClick={() => void api.post('/mmo/render/rebalance').catch(()=>{})}
+                    className="text-[11px] px-2 py-1 rounded-lg border border-accent/20 text-accent/70 hover:text-accent transition-all">
+                    Rebalance
+                  </button>
+                  <button onClick={() => void loadRender()} className="text-muted/40 hover:text-accent transition-colors ml-1">
+                    <RefreshCw size={13}/>
+                  </button>
+                </div>
+              </div>
+
+              {/* Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <StatItem label="Rebalances"  value={renderData.metrics?.rebalances ?? 0}/>
+                <StatItem label="Frames recv" value={renderData.metrics?.framesRecv ?? 0} color="#00e5a0"/>
+                <StatItem label="Tiles stale" value={renderData.metrics?.tilesMissed ?? 0} color={(renderData.metrics?.tilesMissed ?? 0) > 0 ? '#ffb300' : undefined}/>
+                <StatItem label="Avg cost"    value={(renderData.metrics?.avgCost ?? 0).toFixed(2)} color="#a855f7"/>
+              </div>
+
+              {/* 3×3 tile grid visual */}
+              {(renderData.tiles?.length ?? 0) > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted/50">Tile Assignment Grid (3×3 screen tiles)</p>
+                  <div className="grid grid-cols-3 gap-1.5 max-w-[320px]">
+                    {renderData.tiles?.sort((a,b) => a.row - b.row || a.col - b.col).map(tile => {
+                      const quality = tile.frameAge === null ? 'missing' : tile.frameAge > 1500 ? 'error' : tile.frameAge > 500 ? 'degraded' : tile.frameAge > 200 ? 'stale' : 'fresh';
+                      const qColor  = { fresh:'#00e5a0', stale:'#ffb300', degraded:'#ff8c00', error:'#ff4444', missing:'#4a6880' }[quality];
+                      return (
+                        <div key={tile.id}
+                          className="aspect-square rounded-xl border flex flex-col items-center justify-center gap-1 text-center p-1.5"
+                          style={{ borderColor: qColor + '40', background: qColor + '10' }}>
+                          <p className="text-[9px] font-mono font-bold" style={{ color: qColor }}>{tile.id}</p>
+                          <p className="text-[8px] text-muted/50">LOD {tile.lod}</p>
+                          <p className="text-[8px] font-mono truncate w-full text-center" style={{ color: qColor + 'aa' }}>
+                            {tile.peer ? tile.peer.slice(0,8) : '—'}
+                          </p>
+                          <p className="text-[8px] text-muted/40">{quality}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-muted/40 font-mono">
+                    green=fresh · amber=stale · red=error · grey=missing
+                  </p>
+                </div>
+              )}
+
+              {/* Frame summary */}
+              {renderData.frame && (
+                <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                  <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                    <Monitor size={10} className="text-accent/70"/>Frame Summary
+                    <span className="ml-auto text-[10px] font-mono" style={{ color: renderData.frame.complete ? '#00e5a0' : '#ffb300' }}>
+                      {renderData.frame.complete ? 'COMPLETE' : 'PARTIAL'}
+                    </span>
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {renderData.frame.qualityMap?.map((q, i) => {
+                      const col = q === 'fresh' ? '#00e5a0' : q === 'stale' ? '#ffb300' : '#ff4444';
+                      return (
+                        <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono">
+                          <div className="w-2 h-2 rounded-sm flex-shrink-0" style={{ background: col }}/>
+                          <span className="text-muted/50">tile {i}: </span>
+                          <span style={{ color: col }}>{q}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[10px] text-muted/40 font-mono mt-1.5">Avg frame age: {renderData.frame.avgAgeMs}ms</p>
+                </div>
+              )}
+
+              {/* Architecture */}
+              <div className="rounded-xl border border-border/30 bg-panel/30 p-4 font-mono text-[10px] text-muted/50 leading-relaxed">
+                <p className="text-accent/70 font-bold mb-2">VRDL — Distributed GPU Render Fabric</p>
+                <pre>{`Screen → 3×3 tile grid = 9 render regions
+Each tile → assigned to 1 peer (by GPU tier + load)
+Assignment: greedy bin packing by tileCost
+  tileCost = triangles×0.001 + lights×0.15 + entities×0.08
+  gpuBudget = { 0:0.25, 1:0.75, 2:2.0, 3:4.0 } tile-units
+
+Pixel data → peer-to-peer (WebRTC data channel)
+Frame meta → server (for monitoring + reassignment)
+Stale tile → automatic reassignment to fastest peer
+
+NPC render split:
+  logic   → SIMULATION_NODE (VSL authority)
+  render  → nearest RENDER_NODE peer`}</pre>
               </div>
             </div>
           </div>
