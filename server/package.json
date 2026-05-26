@@ -24,7 +24,8 @@
     "express": "^4.19.2",
     "node-llama-cpp": "^3.0.0",
     "sandbox-agent": "^0.4.2",
-    "uuid": "^14.0.0"
+    "uuid": "^14.0.0",
+    "ws": "^8.21.0"
   },
   "engines": {
     "node": ">=20"

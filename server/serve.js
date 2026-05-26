@@ -126,6 +126,22 @@ import {
   getUserProviderStatus, resolveKeyForUser,
 } from './users.js';
 
+import {
+  peerRegistry, npcConsensus, proofChain,
+  attachMMOWebSocket, chunkToZone, PEER_ROLE,
+} from './bkg-p2p.js';
+
+import {
+  getLedger, makeVSLEvent, verifyEvent,
+  reduce, mergeStates, listLedgers, vsStats,
+  AUTHORITY_EPOCH,
+} from './vsl-reducer.js';
+
+import {
+  getClusterManager, listManagers,
+  npcShouldExist, npcPosition,
+} from './cluster-manager.js';
+
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
 
@@ -1538,6 +1554,166 @@ app.get('/voxel/worlds/:id/events/log', (req, res) => {
   res.json(w.getEvents(since, limit));
 });
 
+// ── /mmo/* — Distributed Voxel Consensus Engine (VSL + P2P) ──────────────────
+
+/** GET /mmo/stats — global cluster + peer stats */
+app.get('/mmo/stats', (_req, res) => {
+  res.json(defaultMgr.stats());
+});
+
+/** GET /mmo/zones — list active zone clusters */
+app.get('/mmo/zones', (_req, res) => {
+  res.json(defaultMgr.listClusters().map(c => ({
+    zoneId:    c.zoneId,
+    peerCount: c.peerCount,
+    authority: c.authority,
+    stateHash: (c.ledger?.stateHash ?? '').slice(0, 16),
+    npcs:      c.npcs ?? 0,
+    active:    c.active,
+    metrics:   c.metrics,
+  })));
+});
+
+/** GET /mmo/peers — all registered peers */
+app.get('/mmo/peers', (_req, res) => {
+  res.json([...peerRegistry.peers.values()].map(p => ({
+    id:          p.id,
+    role:        p.role,
+    gpuTier:     p.gpuTier,
+    zoneId:      p.zoneId,
+    computeFarm: p.computeFarm,
+    joinedAt:    p.joinedAt,
+    latency:     p.lat,
+  })));
+});
+
+/** POST /mmo/join — REST-based peer join (WS alternative) */
+app.post('/mmo/join', (req, res) => {
+  const { gpuTier=0, lat=999, bw=1, cx=0, cy=0, cz=0, farm=false } = req.body ?? {};
+  const result = peerRegistry.join({ gpuTier, lat, bw, cx, cy, cz });
+  if (farm) peerRegistry.activateComputeFarm(result.peerId);
+  const cluster = defaultMgr.getCluster(result.zoneId);
+  res.status(201).json({ ...result, clusterState: cluster.snapshot() });
+});
+
+/** DELETE /mmo/peers/:id — leave */
+app.delete('/mmo/peers/:id', (req, res) => {
+  peerRegistry.leave(req.params.id);
+  res.json({ ok: true });
+});
+
+/** PUT /mmo/peers/:id/position — update peer chunk position */
+app.put('/mmo/peers/:id/position', (req, res) => {
+  const { cx=0, cy=0, cz=0 } = req.body ?? {};
+  peerRegistry.updatePosition(req.params.id, +cx, +cy, +cz);
+  res.json({ ok: true, zoneId: chunkToZone(+cx, +cy, +cz) });
+});
+
+/**
+ * POST /mmo/event — ingest a VSL event (from client or agent)
+ * Body: { worldId?, tick, chunkId, op, lx, ly, lz, value, actor }
+ */
+app.post('/mmo/event', (req, res) => {
+  const { worldId = 'default', ...evt } = req.body ?? {};
+
+  // Build + verify event
+  const event = makeVSLEvent(
+    evt.tick ?? 0, evt.chunkId ?? '0000',
+    evt.op ?? 'set',
+    evt.lx ?? 0, evt.ly ?? 0, evt.lz ?? 0,
+    evt.value ?? 0, evt.actor ?? 'api',
+  );
+
+  const cluster = defaultMgr.getCluster(event.chunkId);
+  const result  = cluster.ingestEvent(event);
+  res.json({ ...result, event: { sig: event.sig, tick: event.tick } });
+});
+
+/**
+ * POST /mmo/events/batch — ingest a batch of VSL events
+ * Body: { worldId?, events: VoxelEvent[] }
+ */
+app.post('/mmo/events/batch', (req, res) => {
+  const { worldId = 'default', events = [] } = req.body ?? {};
+  if (!Array.isArray(events)) return res.status(400).json({ error: 'events array required' });
+
+  let accepted = 0, rejected = 0;
+  for (const e of events.slice(0, 1000)) {
+    const evt = makeVSLEvent(e.tick ?? 0, e.chunkId ?? '0000', e.op ?? 'set', e.lx ?? 0, e.ly ?? 0, e.lz ?? 0, e.value ?? 0, e.actor ?? 'api');
+    const r   = defaultMgr.getCluster(evt.chunkId).ingestEvent(evt);
+    r.accepted ? accepted++ : rejected++;
+  }
+  res.json({ accepted, rejected, total: events.length });
+});
+
+/** GET /mmo/zone/:zoneId — zone cluster detail + ledger snapshot */
+app.get('/mmo/zone/:zoneId', (req, res) => {
+  const cluster = defaultMgr.getCluster(req.params.zoneId);
+  res.json({ ...cluster.snapshot(), npcs: cluster.getNPCs() });
+});
+
+/** GET /mmo/zone/:zoneId/ledger — VSL ledger events for a zone */
+app.get('/mmo/zone/:zoneId/ledger', (req, res) => {
+  const cluster  = defaultMgr.getCluster(req.params.zoneId);
+  const since    = parseInt(req.query.since ?? '0', 10);
+  const limit    = parseInt(req.query.limit ?? '200', 10);
+  const events   = cluster.ledger.eventsSince(since, limit);
+  res.json({ zoneId: req.params.zoneId, count: events.length, events });
+});
+
+/** GET /mmo/zone/:zoneId/authority — current authority + schedule */
+app.get('/mmo/zone/:zoneId/authority', (req, res) => {
+  const cluster = defaultMgr.getCluster(req.params.zoneId);
+  res.json(cluster.ledger.authority.toJSON());
+});
+
+/** GET /mmo/npcs — all active NPC states across all zones */
+app.get('/mmo/npcs', (req, res) => {
+  const worldId = req.query.worldId ?? 'default';
+  const npcs = defaultMgr.activeClusters().flatMap(c => c.npcs);
+  res.json({ npcs: [...(npcs instanceof Map ? npcs.values() : npcs)], count: npcs instanceof Map ? npcs.size : npcs.length });
+});
+
+/** GET /mmo/proof — state proof chain for all zones */
+app.get('/mmo/proof', (_req, res) => {
+  const chains = {};
+  for (const [zoneId, chain] of proofChain.chains) {
+    chains[zoneId] = chain.slice(-10);
+  }
+  res.json({ ...proofChain.stats(), chains });
+});
+
+/** GET /mmo/farm — compute farm task queue */
+app.get('/mmo/farm', (_req, res) => {
+  res.json({ tasks: defaultMgr.getFarmQueue(50) });
+});
+
+/** POST /mmo/farm/activate/:peerId — activate compute farm for a peer */
+app.post('/mmo/farm/activate/:peerId', (req, res) => {
+  const ok = peerRegistry.activateComputeFarm(req.params.peerId);
+  res.json({ ok });
+});
+
+/** GET /mmo/bootstrap/:worldId — full world state for new peer cold sync */
+app.get('/mmo/bootstrap/:worldId', (req, res) => {
+  const mgr = getClusterManager(req.params.worldId);
+  res.json(mgr.worldBootstrap());
+});
+
+/** GET /mmo/vsl/stats — VSL ledger registry stats */
+app.get('/mmo/vsl/stats', (_req, res) => res.json(vsStats()));
+
+/** GET /mmo/ws — WebSocket endpoint info */
+app.get('/mmo/ws-info', (_req, res) => {
+  res.json({
+    endpoint: '/mmo/ws',
+    protocol: 'bkg-mmo',
+    version:  '1.0',
+    clients:  mmoWss.clients.size,
+    messages: ['join','move','offer','answer','ice','delta','vote','farm','ping'],
+  });
+});
+
 // ── /vldb/* — VLDB Voxel Layer Database ──────────────────────────────────────
 //
 // Compressed space-event machine.
@@ -2156,7 +2332,13 @@ try {
   writeFileSync(PID_FILE, String(process.pid));
 } catch { /* non-fatal: PID dir may not exist in CI */ }
 
-const httpServer = app.listen(PORT, HOST, () => {
+const httpServer = createServer(app);
+
+// ── Attach MMO WebSocket + start cluster manager ───────────────────────────
+const mmoWss = attachMMOWebSocket(httpServer, peerRegistry, npcConsensus, proofChain);
+const defaultMgr = getClusterManager('default');
+
+httpServer.listen(PORT, HOST, () => {
   _ready = true;
   console.log(`
 ╔══════════════════════════════════════════════════════════╗

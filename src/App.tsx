@@ -12,6 +12,7 @@ import { AgentHub }              from '@/components/AgentHub/AgentHub';
 import { FlowBoard }             from '@/components/Flow/FlowBoard';
 import { GameWizard }            from '@/components/Game/GameWizard';
 import { VoxelEngine }           from '@/components/Voxel/VoxelEngine';
+import { MMOEngine }             from '@/components/MMO/MMOEngine';
 import { useAppState }           from '@/context/AppContext';
 
 type HomeView = 'dashboard' | 'tester' | 'settings';
@@ -38,6 +39,7 @@ function StageView() {
     case 'flow':      return <FlowBoard/>;
     case 'game':      return <GameWizard/>;
     case 'voxel':     return <VoxelEngine/>;
+    case 'mmo':       return <MMOEngine/>;
     default:          return (
       <Dashboard
         onTestModel={() => setHomeView('tester')}

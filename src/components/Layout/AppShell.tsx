@@ -10,7 +10,7 @@
  */
 import { type ReactNode, useState, useEffect, useRef } from 'react';
 import {
-  Cpu, X, Settings, LayoutDashboard, Plus, Bot, Zap, Gamepad2, Layers,
+  Cpu, X, Settings, LayoutDashboard, Plus, Bot, Zap, Gamepad2, Layers, Globe,
   Menu, ChevronRight, Lock, Cloud,
 } from 'lucide-react';
 import { StageProgress }  from './StageProgress';
@@ -383,6 +383,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             ].join(' ')}
           >
             <Layers size={13}/><span>Voxel</span>
+          </button>
+
+          {/* MMO Engine */}
+          <button
+            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'mmo' as import('@/types').Stage })}
+            className={[
+              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
+              state.stage === 'mmo'
+                ? 'text-success border-success/30 bg-success/8'
+                : 'text-muted border-transparent hover:text-success hover:bg-success/6 hover:border-success/15',
+            ].join(' ')}
+          >
+            <Globe size={13}/><span>MMO</span>
           </button>
 
           {/* Admin */}
