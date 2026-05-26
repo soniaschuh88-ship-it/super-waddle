@@ -109,7 +109,26 @@ export function WizardModal() {
             </div>
           </div>
           <div className="p-6">
-            {step==='idea' && <IdeaInput value={ideaText} onChange={setIdeaText} onSubmit={handleProposeFeatures} isLoading={isLoading}/>}
+            {step==='idea' && (
+              <IdeaInput
+                value={ideaText}
+                onChange={setIdeaText}
+                onSubmit={handleProposeFeatures}
+                isLoading={isLoading}
+                loadProgress={
+                  state.engineStatus === 'loading'
+                    ? state.engineProgress.progress
+                    : isLoading ? -1 : undefined
+                }
+                loadText={
+                  state.engineStatus === 'loading'
+                    ? state.engineProgress.text || `Loading model… ${state.engineProgress.progress}%`
+                    : isLoading
+                    ? backendConfig.type === 'webgpu' ? 'Initialising engine…' : `Connecting to ${backendConfig.type}…`
+                    : undefined
+                }
+              />
+            )}
             {step==='features' && (
               isLoading&&features.length===0 ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">

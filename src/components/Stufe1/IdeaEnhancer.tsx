@@ -1,33 +1,49 @@
 /**
  * src/components/Stufe1/IdeaEnhancer.tsx
  *
- * "Enhance with AI" button shown below the idea textarea.
- * Sends the current text to the LLM and replaces it with a more detailed brief.
+ * "Enhance with AI" button with animated progress bar while running.
  */
 import { useState } from 'react';
-import { Wand2, Loader2 } from 'lucide-react';
+import { Wand2, Loader2, Sparkles } from 'lucide-react';
 import { generateJson } from '@/lib/llm-client';
 import { ENHANCE_IDEA_SYSTEM, buildEnhanceIdeaUserPrompt } from '@/lib/prompts';
 import { useAppState } from '@/context/AppContext';
 
 interface IdeaEnhancerProps {
-  ideaText:  string;
+  ideaText:   string;
   onEnhanced: (text: string) => void;
-  disabled?: boolean;
+  disabled?:  boolean;
+}
+
+/** Indeterminate progress bar — visible while work is in progress. */
+function ProgressBar() {
+  return (
+    <div className="relative h-0.5 rounded-full bg-border/60 overflow-hidden w-24">
+      <div
+        className="absolute inset-y-0 w-1/2 bg-accent/70 rounded-full"
+        style={{ animation: 'progressSlide 1.6s ease-in-out infinite' }}
+      />
+      <style>{`
+        @keyframes progressSlide {
+          0%   { left: -50%; }
+          100% { left: 150%; }
+        }
+      `}</style>
+    </div>
+  );
 }
 
 export function IdeaEnhancer({ ideaText, onEnhanced, disabled }: IdeaEnhancerProps) {
-  const { state } = useAppState();
+  const { state }  = useAppState();
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+  const [done,    setDone]    = useState(false);
   const canEnhance = ideaText.trim().length >= 20 && !disabled && !loading;
 
   const handleEnhance = async () => {
     if (!canEnhance) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setDone(false);
     try {
-      // Use generateJson to get a plain string back (we ask for JSON-wrapped text
-      // to keep the response clean, then unwrap it)
       const raw = await generateJson<{ enhanced: string } | string>(
         ENHANCE_IDEA_SYSTEM + '\n\nReturn your output as: {"enhanced":"<text here>"}',
         buildEnhanceIdeaUserPrompt(ideaText),
@@ -43,6 +59,8 @@ export function IdeaEnhancer({ ideaText, onEnhanced, disabled }: IdeaEnhancerPro
 
       if (enhanced.trim()) {
         onEnhanced(enhanced.trim());
+        setDone(true);
+        setTimeout(() => setDone(false), 3000);
       } else {
         setError('Enhancement returned empty. Try again.');
       }
@@ -53,35 +71,45 @@ export function IdeaEnhancer({ ideaText, onEnhanced, disabled }: IdeaEnhancerPro
   };
 
   return (
-    <div className="flex items-center gap-3">
-      <button
-        onClick={handleEnhance}
-        disabled={!canEnhance}
-        className={[
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
-          canEnhance
-            ? 'border-accent/40 bg-accent/8 text-accent hover:bg-accent/15 cursor-pointer'
-            : 'border-border bg-surface text-muted/50 cursor-not-allowed',
-        ].join(' ')}
-        title="Let AI rewrite your idea as a detailed product brief"
-        style={canEnhance ? { background: 'rgba(0,212,170,0.06)' } : undefined}
-      >
-        {loading
-          ? <Loader2 size={12} className="animate-spin" />
-          : <Wand2 size={12} />
-        }
-        {loading ? 'Enhancing…' : 'Enhance with AI'}
-      </button>
+    <div className="flex flex-col gap-1.5 items-end">
+      <div className="flex items-center gap-2.5">
+        {/* Success flash */}
+        {done && !loading && (
+          <span className="text-[11px] text-success flex items-center gap-1">
+            <Sparkles size={11}/>Enhanced!
+          </span>
+        )}
+        {/* Error */}
+        {error && !loading && (
+          <span className="text-[11px] text-error truncate max-w-[200px]">{error}</span>
+        )}
+        {/* Hint when idle */}
+        {!error && !loading && !done && (
+          <span className="text-[11px] text-muted/40">AI rewrites as a detailed brief</span>
+        )}
 
-      {error && (
-        <span className="text-[11px] text-error truncate max-w-xs">{error}</span>
-      )}
+        <button
+          onClick={handleEnhance}
+          disabled={!canEnhance}
+          className={[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+            canEnhance
+              ? 'border-accent/40 text-accent hover:bg-accent/15 cursor-pointer'
+              : 'border-border bg-surface text-muted/50 cursor-not-allowed',
+          ].join(' ')}
+          style={canEnhance ? { background: 'rgba(0,212,170,0.06)' } : undefined}
+          title="Let AI rewrite your idea as a detailed product brief"
+        >
+          {loading
+            ? <Loader2 size={12} className="animate-spin" />
+            : <Wand2 size={12} />
+          }
+          {loading ? 'Enhancing…' : 'Enhance with AI'}
+        </button>
+      </div>
 
-      {!error && (
-        <span className="text-[11px] text-muted/50">
-          AI rewrites your idea as a detailed product brief
-        </span>
-      )}
+      {/* Indeterminate progress bar while running */}
+      {loading && <ProgressBar />}
     </div>
   );
 }
