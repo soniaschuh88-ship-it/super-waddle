@@ -1,110 +1,85 @@
 # bKG — best Known Garbage
 
-> AI-powered local coding workspace with free cloud provider integration,
-> task management, and a universal coding agent harness.
+> Full-stack local AI coding workspace with voxel MMO engine, game studio,
+> distributed consensus layer, Flow task board, and cloud provider integration.
+
+[![127 Tests Passing](https://img.shields.io/badge/tests-127%20passing-00e5a0)](test/alpha.js)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933)](https://nodejs.org)
 
 ---
 
 ## What is bKG?
 
-**bKG** is a self-hosted AI coding workspace that runs entirely on your machine.
-It combines three systems into one unified web app:
+**bKG** is a self-hosted AI development workspace that runs entirely on your machine.
+It combines seven integrated systems into one unified web app:
 
 | System | What it does |
-|--------|--------------|
-| **bKG Flow** | AI task board (Kanban, PROMPT.md planning, missions, evals) |
-| **bKG Agent Hub** | Universal coding agent interface (Pi, Claude Code, Codex, etc.) |
-| **bKG Plan Generator** | Wizard that turns a raw idea into a full software plan |
+|--------|-------------|
+| **Plan Generator** | Wizard that turns a raw idea into a full structured software plan |
+| **Flow Board** | AI task board (Kanban, PROMPT.md, missions, evals, webhooks) |
+| **Agent Hub** | Universal coding agent interface (Pi, Claude Code, Codex, Amp) |
+| **Game Studio** | 9-step single-player game blueprint wizard with AI generation |
+| **Game Client** | User MMO lobby — browse & join published worlds |
+| **Voxel Engine** | VLDB 32³-chunk voxel world editor with WASM-ready bitpacked storage |
+| **MMO Engine** | P2P/VSL distributed multiplayer with zone sharding, chaos recovery |
 
-Everything is served from a single Node.js process. No Docker, no cloud accounts required.
-WebGPU models run 100 % in the browser. Ollama and node-llama-cpp run locally.
-Free cloud providers (Groq, NVIDIA, OpenRouter, …) are optional.
+Everything is served from a **single Node.js process**.
+No microservices. No cloud accounts required. No Docker required (but supported).
 
 ---
 
 ## Quick Start
 
-### 1. Clone
+### Option A — Interactive installer (recommended)
 
 ```bash
 git clone https://github.com/soniaschuh88-ship-it/super-waddle.git
 cd super-waddle
+./install.sh
 ```
 
-### 2. Install dependencies
+The installer asks you to choose **Local** (Node.js) or **Docker**, then does everything.
+
+### Option B — Manual (local)
 
 ```bash
-# Root (frontend)
+# 1. Clone
+git clone https://github.com/soniaschuh88-ship-it/super-waddle.git
+cd super-waddle
+
+# 2. Install
 npm install
-
-# Server
 cd server && npm install && cd ..
-```
 
-### 3. Configure
-
-```bash
-cp .env.example .env
-# Edit .env — at minimum set BKG_ADMIN_PASSWORD_HASH
-# Generate a hash:  node -e "const b=require('bcryptjs');console.log(b.hashSync('yourpw',12))"
-```
-
-### 4. Build and start
-
-```bash
-# Build frontend bundle
+# 3. Build frontend
 npm run build
 
-# Start everything (app server + serveo tunnel)
-./bkg.sh start
-
-# Or just the server (no tunnel)
-BKG_TUNNEL=0 ./bkg.sh start
+# 4. Start
+node server/serve.js
 ```
 
-App is at **http://localhost:4001**
-Admin at **http://localhost:4001/admin**
-
----
-
-## `bkg.sh` Process Manager
-
-```
-./bkg.sh start          # kill existing → build if needed → serve.js + tunnel
-./bkg.sh stop           # graceful stop (PID file + port)
-./bkg.sh restart        # stop + start
-./bkg.sh status         # ports, PIDs, public tunnel URL
-./bkg.sh build          # rebuild dist/ only
-./bkg.sh dev            # Vite hot-reload dev server + tunnel
-./bkg.sh logs [serve|tunnel|dev|build|all]
-```
-
-### `.bkg.env` options
+### Option C — Docker
 
 ```bash
-BKG_PORT=4001          # main server port
-BKG_TUNNEL=1           # 1 = open serveo.net tunnel
-BKG_NO_BUILD=0         # 1 = skip rebuild check
+git clone https://github.com/soniaschuh88-ship-it/super-waddle.git
+cd super-waddle
+docker compose up --build
 ```
+
+**First run:** admin password is printed in the terminal and pre-filled on the `/admin` page.
 
 ---
 
-## Operating Modes
+## Access
 
-### 🔒 Private Mode
-All inference stays on your device. No data sent externally.
+| URL | What |
+|-----|------|
+| `http://localhost:4001` | Main app |
+| `http://localhost:4001/admin` | Admin dashboard |
+| `http://localhost:4001/health` | API health check |
 
-- **WebGPU** — runs quantised LLMs directly in Chrome/Edge (no install needed)
-- **Ollama** — local API server at `http://localhost:11434`
-- **node-llama-cpp** — GGUF model server bundled with bKG at port 8001
-
-Switch in the header bar or `localStorage.setItem('bkg_mode','private')`.
-
-### ☁ Cloud Mode
-Routes inference through free provider APIs via the bKG server proxy.
-Your API keys are stored server-side; the browser never touches them directly.
-
-Free providers: **Groq · NVIDIA NIM · LLM7 · Kilo · OpenRouter · SambaNova · Mistral · Cerebras · xAI · HuggingFace** + more.
+The default port is **4001**. Override with `BKG_PORT=5020 node server/serve.js`.
 
 ---
 
@@ -112,240 +87,162 @@ Free providers: **Groq · NVIDIA NIM · LLM7 · Kilo · OpenRouter · SambaNova 
 
 ```
 Browser (React + Vite)
-  │
-  ├─ /            → SPA (dist/)
-  ├─ /admin       → Admin Dashboard
-  ├─ /api/*       → Model server manager (llama-cpp + Ollama)
-  ├─ /api/proxy/* → CORS-safe proxy for local backends
-  ├─ /auth/*      → Admin login (bcrypt + HMAC token)
-  ├─ /api-keys/*  → API key CRUD (bearer token auth)
-  ├─ /providers/* → Provider registry + /proxy (cloud inference)
-  ├─ /user/*      → Per-user provider keys + onboarding
-  ├─ /admin/*     → Global provider config (admin only)
-  ├─ /flow/*      → bKG Flow task board (SQLite)
-  ├─ /hub/*       → bKG Agent Hub (sessions, SSE, FS, exec)
-  ├─ /sandbox/*   → Legacy sandbox-agent proxy (deprecated)
-  ├─ /agent/*     → Pi coding agent sessions
-  ├─ /plugins/*   → Plugin manager
-  └─ /settings    → Agent configuration
+    │
+    ▼
+Express server (serve.js ~3500 lines)
+    ├── /auth/*         bcrypt + HMAC JWT tokens
+    ├── /flow/*         SQLite task board (better-sqlite3)
+    ├── /hub/*          Agent session orchestration
+    ├── /game/*         Game config + blueprint CRUD + AI SSE generation
+    ├── /game/mmo/*     MMO world publish/unpublish
+    ├── /vldb/*         Voxel world storage (bitpacked, RLE, delta log)
+    ├── /mmo/*          P2P relay, VSL ledger, zone sharding, chaos recovery
+    ├── /providers/*    19 cloud AI providers (NVIDIA, Groq, OpenRouter, …)
+    ├── /admin/*        Admin API (globals, users, DB viewer)
+    ├── /api-keys/*     User API key management
+    └── /*              React SPA fallback (dist/index.html)
+
+Persistent state (~/.bkg/)
+    ├── admin.env       bcrypt hash for admin password
+    ├── install.key     One-time plaintext install key (deleted after first /admin visit)
+    ├── blueprints/     Game blueprint JSON files
+    ├── flow-*.db       Flow task SQLite databases (one per project)
+    └── run/serve.pid   Running server PID
 ```
 
-### Server files
-
-| File | Purpose |
-|------|---------|
-| `server/serve.js` | Unified Express server — static SPA + all API routes |
-| `server/agent.js` | Pi coding agent engine (pi-agent-core) |
-| `server/bkg-flow.js` | Task board — SQLite DB, CRUD, AI planning |
-| `server/bkg-hub.js` | Agent hub — sessions, SSE, FS, process exec |
-| `server/providers.js` | Free provider registry (19 providers) |
-| `server/users.js` | Per-user config, provider keys, fallback chain |
-| `server/api-keys.js` | Bearer token store (hashed) |
-| `server/sandbox.js` | sandbox-agent binary manager |
-| `server/plugins.js` | Pi-compatible plugin manager |
-| `server/index.js` | node-llama-cpp inference server |
-
-### Frontend structure
-
-```
-src/
-├─ components/
-│  ├─ Layout/         AppShell, StageProgress
-│  ├─ UserDashboard/  Dashboard, ModelTester, UserSettings, Onboarding
-│  ├─ Flow/           FlowBoard, FlowTask
-│  ├─ AgentHub/       AgentHub
-│  ├─ Admin/          AdminApp, AdminAuth, ApiKeys, GlobalProviders, ...
-│  ├─ Stufe1/         WizardModal, BackendSelector, IdeaEnhancer
-│  ├─ Stufe1_5/       ValidationLoop
-│  ├─ Stufe2/         DualPaneExplorer
-│  ├─ Stufe3/         TerminalConsole
-│  └─ CodeStudio/     CodeStudio
-├─ context/           AppContext (stage, mode, backendConfig, ...)
-├─ lib/               llm-client, webllm, db, prompts, simulation
-└─ types/             index.ts
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full deep-dive.
 
 ---
 
-## Configuration
+## Game Features
 
-### `.env` (server-side)
+### Single-Player Game Studio (`/game` stage)
+
+1. Set game name, engine, genre, tone
+2. AI generates each system individually with live streaming:
+   - **World** — geography, factions, magic/tech system, lore
+   - **Story** — 3-act narrative, protagonist/antagonist arcs
+   - **NPCs** — 8-12 characters (merchants, quest-givers, companions)
+   - **Monsters** — 12-18 creatures with stats, abilities, loot tables
+   - **Quests** — Main chain + side quests + hidden secrets
+   - **Loot** — Item database with tier system (Common → Artifact)
+   - **Levels** — Player classes, skill trees, XP curves
+   - **Zones** — Regions, dungeons, cities, boss lairs
+3. Create Flow task → AI coding agent builds the game
+
+### MMO Engine
+
+- **Admin creates** a blueprint → publishes a world
+- **Users join** via Game Client (browsable lobby)
+- P2P WebSocket fabric with VSL deterministic consensus
+- Zone sharding, interest management, chaos recovery
+- Speculative replay, state healer, zone stitcher
+
+### World Builder (`/world-builder` stage)
+
+Links a game blueprint to a VLDB voxel world:
+- Picks biomes from blueprint, seeds terrain generator
+- Creates VLDB world, links `worldId` back to blueprint
+- Opens result in Voxel Engine for editing
+
+---
+
+## AI Provider Integration
+
+bKG supports 19 cloud providers out of the box. All free-tier providers are auto-discovered:
+
+| Provider | Tier | Notes |
+|----------|------|-------|
+| **Kilo Code** | Free anon | No key needed |
+| **LLM7** | Free anon | No key needed |
+| **NVIDIA NIM** | Freemium | 1,000 req/month free |
+| **Groq** | Free tier | Ultra-fast inference |
+| **OpenRouter** | Free models | 200+ models, many free |
+| **Mistral** | Free dev | No credit card |
+| **SambaNova** | Free | 20–480 req/min |
+| + 12 more | Various | See Admin → Global Providers |
+
+Add your key in **Dashboard → Settings → API Keys** or **Admin → Global Providers**.
+
+---
+
+## AI Inference Backends
+
+| Backend | How to use |
+|---------|-----------|
+| **WebGPU (browser)** | No setup — runs Llama 3.2 1B in the browser tab |
+| **Ollama** | `ollama serve` then select in Dashboard |
+| **node-llama-cpp** | `cd server && npm run pull hf:...` |
+| **Cloud providers** | Add API key in Dashboard or Admin |
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BKG_PORT` | `4001` | HTTP port |
+| `BKG_PORT` | `4001` | HTTP server port |
 | `BKG_HOST` | `0.0.0.0` | Bind address |
-| `BKG_LLAMA_PORT` | `8001` | node-llama-cpp port |
-| `BKG_OLLAMA_PORT` | `11434` | Ollama port |
-| `BKG_ADMIN_PASSWORD_HASH` | — | bcrypt hash of admin password |
-| `BKG_JWT_SECRET` | random | HMAC secret for admin tokens |
-| `BKG_DIR` | `~/.bkg` | Config + data directory |
-| `BKG_FLOW_DB` | `~/.bkg/flow.db` | Flow SQLite database path |
-| `BKG_MASTER_KEY` | scrypt-derived | AES-256-GCM key for secrets |
-| `BKG_SA_PORT` | `7468` | sandbox-agent port |
-| `BKG_TUNNEL` | `1` | Enable serveo tunnel |
-
-Provider API keys (optional):
-`GROQ_API_KEY` · `NVIDIA_API_KEY` · `OPENROUTER_API_KEY` · `MISTRAL_API_KEY` · `SAMBANOVA_API_KEY` · `CEREBRAS_API_KEY` · `XAI_API_KEY` · `HF_TOKEN` · `LLM7_API_KEY`
-
-### Data directory `~/.bkg/`
-
-```
-~/.bkg/
-├─ flow.db              bKG Flow SQLite database
-├─ settings.json        Agent + model settings
-├─ api-keys.json        Bearer token store (hashed)
-├─ global-providers.json  Admin global API key config
-├─ auth.json            Pi auth storage
-├─ users/               Per-user provider key configs
-├─ hub-sessions/        Agent hub session event logs (.jsonl)
-├─ workspaces/          Agent hub session working directories
-├─ sessions/            Pi agent session JSONL logs
-├─ extensions/          Pi agent extensions
-├─ skills/              Pi agent skill bundles
-└─ plugins/             Plugin installs
-```
-
----
-
-## Admin Dashboard
-
-Navigate to `/admin` and log in with the admin password.
-
-| Tab | Purpose |
-|-----|---------|
-| **Global Providers** | Set fallback API keys for all 19 providers |
-| **API Keys** | Create/revoke bearer tokens (inference / agent / admin / readonly) |
-| **Agent Settings** | Configure model backend (type, URL, model ID) |
-| **Server Manager** | Start/stop llama-cpp and Ollama servers |
-| **Download Models** | Pull GGUF models to `server/models/` |
-| **Ollama Manager** | Pull, delete, inspect Ollama models |
-| **node-llama-cpp** | Model swap, GPU info, health check |
-| **WebLLM Cache** | Inspect browser-cached WebGPU models |
-| **Plugins** | Install pi-compatible extension packages |
-| **Embeddings Lab** | Test embedding models |
-| **System Stats** | CPU / memory / disk |
-| **AI Settings** | UI model selector defaults |
-
----
-
-## API Reference
-
-### Auth
-
-```bash
-POST /auth/login          { password } → { token }
-GET  /auth/verify         Authorization: Bearer <token> → { valid }
-POST /auth/hash           { password } → { hash }  (first-run only)
-```
-
-### bKG Flow
-
-```bash
-GET  /flow/health
-GET  /flow/board/:projectId
-GET  /flow/projects
-POST /flow/projects                  { name, description, color }
-GET/PUT/DELETE /flow/projects/:id
-GET  /flow/tasks?projectId=&status=
-POST /flow/tasks                     { title, description, status, projectId }
-GET/PUT/DELETE /flow/tasks/:id
-POST /flow/tasks/:id/move            { status, index? }
-POST /flow/tasks/:id/plan            { providerId?, model? }  → PROMPT.md
-GET  /flow/tasks/:id/logs            ?since=  (SSE or REST)
-GET/POST /flow/tasks/:id/comments
-GET/POST /flow/tasks/:id/steps
-GET/POST /flow/tasks/:id/deps
-GET  /flow/missions?projectId=
-POST /flow/missions
-GET/PUT /flow/missions/:id
-GET  /flow/activity?projectId=&limit=
-GET/POST/DELETE /flow/secrets
-GET/POST /flow/tasks/:id/evals
-```
-
-### bKG Agent Hub
-
-```bash
-GET  /hub/health
-GET  /hub/agents
-GET  /hub/sessions
-POST /hub/sessions                   { agent, agentMode, cwd?, initialMessage? }
-GET/DELETE /hub/sessions/:id
-POST /hub/sessions/:id/message       { message }
-POST /hub/sessions/:id/abort
-GET  /hub/sessions/:id/events        ?offset=  (SSE)
-GET  /hub/sessions/:id/events/list   ?offset=&limit=
-POST /hub/sessions/:id/permission    { approved }
-GET  /hub/sessions/:id/fs            ?path=
-GET  /hub/sessions/:id/fs/read       ?path=
-PUT  /hub/sessions/:id/fs/write      { path, content }
-DELETE /hub/sessions/:id/fs/delete   ?path=
-POST /hub/sessions/:id/exec          { command }  (SSE)
-```
-
-### Cloud Providers
-
-```bash
-GET  /providers/list
-GET  /providers/:id/models
-POST /providers/proxy                { provider, model, messages, ... }
-GET/PUT /user/providers
-GET  /user/profile
-POST /user/onboarded
-GET  /admin/globals
-PUT  /admin/globals
-POST /admin/globals/providers        { providerKeys }
-```
-
-### Local backend proxy (CORS-safe)
-
-```bash
-GET  /api/proxy/ollama/tags
-POST /api/proxy/ollama/pull
-GET  /api/proxy/llama/models
-GET  /api/proxy/llama/health
-GET  /api/proxy/ping
-```
+| `BKG_ADMIN_PASSWORD_HASH` | auto-generated | bcrypt hash of admin password |
+| `BKG_JWT_SECRET` | random | JWT signing secret |
+| `BKG_DIR` | `~/.bkg` | Persistent data directory |
+| `NVIDIA_API_KEY` | — | Global NVIDIA NIM key |
+| `OPENROUTER_API_KEY` | — | Global OpenRouter key |
 
 ---
 
 ## Development
 
 ```bash
-# Dev server with hot-reload
-./bkg.sh dev
+# Start backend
+BKG_PORT=5020 node server/serve.js &
+
+# Start Vite dev server (proxies all API calls to backend)
+BKG_PORT=5020 npm run dev
+# → http://localhost:3000 (with HMR)
+```
+
+```bash
+# Run tests (127 assertions)
+node test/alpha.js http://localhost:5020
 
 # Type check
 npx tsc --noEmit
 
+# Lint
+npm run lint
+
 # Build
 npm run build
-
-# Server syntax check
-node --check server/serve.js
 ```
 
-### Tech stack
+---
 
-| Layer | Technologies |
-|-------|-------------|
-| **Frontend** | React 18 + TypeScript + Vite + Tailwind CSS |
-| **UI fonts** | Orbitron (display) · Space Grotesk (body) · JetBrains Mono |
-| **Backend** | Node.js ESM + Express 4 |
-| **Database** | better-sqlite3 (Flow tasks) · sql.js (browser SQLite) |
-| **AI in-browser** | @mlc-ai/web-llm (WebGPU) |
-| **AI local** | node-llama-cpp v3 · Ollama |
-| **AI cloud** | 19 OpenAI-compatible providers via /providers/proxy |
-| **Agent** | @earendil-works/pi-coding-agent |
-| **Auth** | bcryptjs + HMAC-SHA256 tokens |
-| **Crypto** | AES-256-GCM secrets (Node.js crypto) |
-| **Tunnel** | serveo.net reverse SSH proxy |
+## Documentation
+
+| File | Contents |
+|------|----------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Full system design, module map, data flows |
+| [API.md](API.md) | Complete REST API reference (all 120+ endpoints) |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Production deployment guide |
+| [SECURITY.md](SECURITY.md) | Security policy and practices |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
+| [docs/GAME_BLUEPRINT.md](docs/GAME_BLUEPRINT.md) | Game blueprint schema reference |
+| [docs/GAME_SYSTEMS.md](docs/GAME_SYSTEMS.md) | All game subsystems documented |
+| [docs/FEATURES.md](docs/FEATURES.md) | Complete feature inventory |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed subsystem architecture |
 
 ---
 
 ## License
 
-MIT — see `LICENSE`
-
-Built with ❤ by Sonia Schuh · bKG — best Known Garbage
+MIT © 2026 Sonia Schuh & contributors
