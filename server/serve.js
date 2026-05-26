@@ -103,6 +103,13 @@ import {
 } from './bkg-game.js';
 
 import {
+  createBlueprint, saveBlueprint, getBlueprint, listBlueprints,
+  updateBlueprintSection, deleteBlueprint, blueprintStats,
+  buildSectionPrompt, npcTemplate, monsterTemplate, questTemplate,
+  itemTemplate, zoneTemplate, BLUEPRINT_DEFAULTS,
+} from './bkg-game-blueprint.js';
+
+import {
   VOXEL_TYPES, BIOMES, VOXEL_COLORS, voxel, chunkKey,
   VoxelWorld, createWorld, getWorld, listWorlds, deleteWorld,
   kernel as voxelKernel,
@@ -1435,6 +1442,153 @@ app.post('/game/create-task', (req, res) => {
 
     res.status(201).json(task);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── /game/blueprint/* — Blueprint CRUD + AI generation ────────────────────────
+
+app.get('/game/blueprint/list', (req, res) => {
+  res.json({ blueprints: listBlueprints(req.query.mode?.toString() ?? null) });
+});
+
+app.post('/game/blueprint/create', (req, res) => {
+  res.json(createBlueprint(req.body ?? {}));
+});
+
+app.get('/game/blueprint/templates', (_req, res) => {
+  res.json({ npc:npcTemplate(), monster:monsterTemplate(), quest:questTemplate(), item:itemTemplate(), zone:zoneTemplate(), defaults:BLUEPRINT_DEFAULTS });
+});
+
+app.get('/game/blueprint/:id', (req, res) => {
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+  res.json(bp);
+});
+
+app.get('/game/blueprint/:id/stats', (req, res) => {
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+  res.json(blueprintStats(bp));
+});
+
+app.put('/game/blueprint/:id', (req, res) => {
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+  res.json(saveBlueprint({ ...bp, ...(req.body??{}), id:bp.id }));
+});
+
+app.patch('/game/blueprint/:id/section/:section', (req, res) => {
+  try { res.json(updateBlueprintSection(req.params.id, req.params.section, req.body)); }
+  catch (e) { res.status(400).json({ error:e.message }); }
+});
+
+app.delete('/game/blueprint/:id', (req, res) => res.json(deleteBlueprint(req.params.id)));
+
+/**
+ * POST /game/blueprint/:id/generate/:section — stream AI generation via SSE
+ */
+app.post('/game/blueprint/:id/generate/:section', async (req, res) => {
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+
+  const section = req.params.section;
+  const prompt  = buildSectionPrompt(section, { ...bp, ...(req.body?.overrides ?? {}) });
+
+  // Resolve API key: user key → global NVIDIA → global OpenRouter
+  const userKey   = req.headers.authorization?.replace('Bearer ','').trim();
+  const userProfile = userKey ? getUserProfile(userKey) : null;
+  const nvidiaKey = userProfile?.providers?.nvidia_api_key
+    || getGlobalProviderConfig().providerKeys?.nvidia_api_key
+    || process.env.NVIDIA_API_KEY || '';
+  const orKey     = userProfile?.providers?.openrouter_api_key
+    || getGlobalProviderConfig().providerKeys?.openrouter_api_key
+    || process.env.OPENROUTER_API_KEY || '';
+  const apiKey    = nvidiaKey || orKey;
+
+  if (!apiKey) {
+    return res.status(503).json({ error:'No AI API key. Add NVIDIA or OpenRouter key in Admin → Global Providers.' });
+  }
+
+  res.setHeader('Content-Type','text/event-stream');
+  res.setHeader('Cache-Control','no-cache');
+  res.setHeader('X-Accel-Buffering','no');
+  const send = (t,d) => res.write(`data: ${JSON.stringify({type:t,data:d})}\n\n`);
+
+  const isNvidia = apiKey.startsWith('nvapi-');
+  const endpoint = isNvidia
+    ? 'https://integrate.api.nvidia.com/v1/chat/completions'
+    : 'https://openrouter.ai/api/v1/chat/completions';
+  const model    = isNvidia ? 'meta/llama-4-scout-17b-16e-instruct' : 'meta-llama/llama-3.1-8b-instruct:free';
+
+  try {
+    const resp = await fetch(endpoint, {
+      method:'POST',
+      headers:{ Authorization:`Bearer ${apiKey}`, 'Content-Type':'application/json' },
+      body: JSON.stringify({ model, stream:true, max_tokens: section==='gameplan'?4096:3000, temperature:0.85,
+        messages:[{ role:'system', content:prompt.system },{ role:'user', content:prompt.user }] }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (!resp.ok) { send('error',{ message:`AI ${resp.status}: ${(await resp.text()).slice(0,200)}` }); return res.end(); }
+
+    let full='', buf='';
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read(); if (done) break;
+      buf += dec.decode(value,{ stream:true });
+      const lines = buf.split('\n'); buf = lines.pop()??'';
+      for (const ln of lines) {
+        if (!ln.startsWith('data:')) continue;
+        const raw = ln.slice(5).trim(); if (raw==='[DONE]') continue;
+        try {
+          const tok = JSON.parse(raw).choices?.[0]?.delta?.content ?? '';
+          if (tok) { full+=tok; send('chunk',{ token:tok }); }
+        } catch { /**/ }
+      }
+    }
+
+    // Parse structured sections
+    let parsed = full;
+    if (['npcs','monsters','quests','zones'].includes(section)) {
+      try { const m=full.match(/\[[\s\S]*\]/); if(m) parsed=JSON.parse(m[0]); } catch{/**/ }
+    } else if (['loot','levels'].includes(section)) {
+      try { const m=full.match(/\{[\s\S]*\}/); if(m) { const p=JSON.parse(m[0]); parsed={...bp[section],...p}; } } catch{/**/ }
+    }
+
+    // Persist
+    const fresh = getBlueprint(req.params.id);
+    if (fresh) {
+      fresh.docs[section] = full;
+      if (!fresh.generatedSections.includes(section)) fresh.generatedSections.push(section);
+      if (Array.isArray(parsed) && parsed.length) fresh[section]=parsed;
+      else if (['loot','levels'].includes(section) && typeof parsed==='object') fresh[section]=parsed;
+      saveBlueprint(fresh);
+    }
+
+    send('done',{ fullText:full, section, parsedData:parsed }); res.end();
+  } catch(e) { send('error',{ message:e.message }); res.end(); }
+});
+
+// ── /game/mmo/worlds — public MMO lobby ───────────────────────────────────────
+
+app.get('/game/mmo/worlds', (_req, res) => {
+  const worlds = listBlueprints('mmo').filter(b => b.status==='published');
+  res.json({ worlds });
+});
+
+app.post('/game/mmo/publish/:id', (req, res) => {
+  if (!requireAdminSession(req,res)) return;
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+  bp.status='published'; bp.publishedAt=Date.now(); saveBlueprint(bp);
+  res.json({ ok:true, blueprint:bp });
+});
+
+app.post('/game/mmo/unpublish/:id', (req, res) => {
+  if (!requireAdminSession(req,res)) return;
+  const bp = getBlueprint(req.params.id);
+  if (!bp) return res.status(404).json({ error:'Blueprint not found' });
+  bp.status='complete'; saveBlueprint(bp);
+  res.json({ ok:true });
 });
 
 // ── /voxel/* — bKG Voxel Engine ──────────────────────────────────────────────
