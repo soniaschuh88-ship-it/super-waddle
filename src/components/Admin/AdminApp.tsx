@@ -3,7 +3,7 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download } from 'lucide-react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download, Bot, Puzzle } from 'lucide-react';
 import { AdminAuth, checkPassword } from './AdminAuth';
 import { OllamaManager }       from './OllamaManager';
 import { NodeLlamaCppManager } from './NodeLlamaCppManager';
@@ -13,13 +13,17 @@ import { SystemStats }         from './SystemStats';
 import { AISettings }          from './AISettings';
 import { EmbeddingsLab }       from './EmbeddingsLab';
 import { ModelDownloadPanel }  from './ModelDownloadPanel';
+import { AgentSettings }       from './AgentSettings';
+import { PluginManager }       from './PluginManager';
 import { useAppState }         from '@/context/AppContext';
 
 const SESSION_KEY = 'icadp_admin_unlocked';
 
-type Tab = 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+type Tab = 'agent' | 'plugins' | 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
+  { id:'agent',      label:'Agent Settings',    icon:Bot          },
+  { id:'plugins',    label:'Plugins',           icon:Puzzle       },
   { id:'servers',    label:'Server Manager',    icon:Power        },
   { id:'models',     label:'Download Models',   icon:Download     },
   { id:'embeddings', label:'Embeddings Lab',    icon:FlaskConical },
@@ -94,6 +98,8 @@ export function AdminApp() {
               <ActiveTab.icon size={18} className="text-accent"/>
               <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
             </div>
+            {tab === 'agent'      && <AgentSettings/>}
+            {tab === 'plugins'    && <PluginManager/>}
             {tab === 'servers'    && <ServerManager/>}
             {tab === 'models'     && (
               <ModelDownloadPanel

@@ -5,18 +5,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start":        "node serve.js",
-    "inference":    "node index.js",
-    "dev":          "node --watch serve.js",
-    "gpu-info":     "npx --no node-llama-cpp inspect gpu",
-    "pull":         "npx --no node-llama-cpp pull --dir ./models",
-    "chat":         "npx --no node-llama-cpp chat",
-    "postinstall":  "mkdir -p models"
+    "start": "node serve.js",
+    "inference": "node index.js",
+    "dev": "node --watch serve.js",
+    "gpu-info": "npx --no node-llama-cpp inspect gpu",
+    "pull": "npx --no node-llama-cpp pull --dir ./models",
+    "chat": "npx --no node-llama-cpp chat",
+    "postinstall": "mkdir -p models"
   },
   "dependencies": {
-    "node-llama-cpp": "^3.0.0",
-    "express":        "^4.19.2",
-    "cors":           "^2.8.5"
+    "@earendil-works/pi-agent-core": "^0.75.5",
+    "@earendil-works/pi-ai": "^0.75.5",
+    "@earendil-works/pi-coding-agent": "^0.75.5",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-llama-cpp": "^3.0.0"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

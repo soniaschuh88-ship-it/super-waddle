@@ -303,3 +303,160 @@ export async function generateStreaming(system: string, user: string, onChunk: (
   return restStream(config.serverUrl, config.modelId,
     [{ role: 'system', content: system }, { role: 'user', content: user }], onChunk, 0.4, max);
 }
+
+// ── ICADP Coding Agent API (talks to serve.js /agent/* + /plugins/* + /settings) ──
+
+/** Base URL for the ICADP serve.js unified server. Defaults to same origin. */
+const SERVE_BASE = () => window.location.origin;
+
+import type {
+  AgentSession, AgentEvent, AgentSettings,
+  Plugin, PluginSearchResult,
+} from '@/types';
+
+// ─── Agent sessions ──────────────────────────────────────────────────────────
+
+/** Start a new coding agent session. Returns the sessionId. */
+export async function agentStartSession(opts: {
+  cwd?: string;
+  systemPrompt?: string;
+  tools?: string[];
+  initialMessage?: string;
+}): Promise<{ sessionId: string }> {
+  const r = await fetch(`${SERVE_BASE()}/agent/session`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  });
+  if (!r.ok) throw new Error(`Agent start failed: ${await r.text()}`);
+  return r.json() as Promise<{ sessionId: string }>;
+}
+
+/** Send a user message to a running agent session. */
+export async function agentSendMessage(sessionId: string, text: string): Promise<void> {
+  const r = await fetch(`${SERVE_BASE()}/agent/session/${sessionId}/message`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) throw new Error(`Send failed: ${await r.text()}`);
+}
+
+/** Abort the current agent turn. */
+export async function agentAbort(sessionId: string): Promise<void> {
+  await fetch(`${SERVE_BASE()}/agent/session/${sessionId}/abort`, { method: 'POST' });
+}
+
+/** Dispose (clean up) an agent session. */
+export async function agentDispose(sessionId: string): Promise<void> {
+  await fetch(`${SERVE_BASE()}/agent/session/${sessionId}`, { method: 'DELETE' });
+}
+
+/** List all active sessions. */
+export async function agentListSessions(): Promise<AgentSession[]> {
+  const r = await fetch(`${SERVE_BASE()}/agent/sessions`);
+  if (!r.ok) return [];
+  return r.json() as Promise<AgentSession[]>;
+}
+
+/** Poll for new events since a given index. */
+export async function agentPollEvents(sessionId: string, afterIndex = 0): Promise<{ events: AgentEvent[]; total: number }> {
+  const r = await fetch(`${SERVE_BASE()}/agent/session/${sessionId}/poll?after=${afterIndex}`);
+  if (!r.ok) return { events: [], total: 0 };
+  return r.json() as Promise<{ events: AgentEvent[]; total: number }>;
+}
+
+// ─── Agent settings ───────────────────────────────────────────────────────────
+
+export async function getAgentSettings(): Promise<AgentSettings | null> {
+  try {
+    const r = await fetch(`${SERVE_BASE()}/settings`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return null;
+    return r.json() as Promise<AgentSettings>;
+  } catch { return null; }
+}
+
+export async function saveAgentSettings(partial: Partial<AgentSettings>): Promise<AgentSettings> {
+  const r = await fetch(`${SERVE_BASE()}/settings`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(partial),
+  });
+  if (!r.ok) throw new Error(`Save failed: ${await r.text()}`);
+  return r.json() as Promise<AgentSettings>;
+}
+
+// ─── Plugin manager ───────────────────────────────────────────────────────────
+
+export async function pluginsList(): Promise<Plugin[]> {
+  try {
+    const r = await fetch(`${SERVE_BASE()}/plugins`, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) return [];
+    return r.json() as Promise<Plugin[]>;
+  } catch { return []; }
+}
+
+/**
+ * Install a plugin with SSE progress.
+ * @param source  "npm:@scope/pkg" | "git:github.com/user/repo"
+ * @param onLine  Called with each progress line
+ */
+export async function pluginsInstall(
+  source: string,
+  onLine: (msg: string) => void,
+): Promise<Plugin> {
+  const r = await fetch(`${SERVE_BASE()}/plugins/install`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  });
+  if (!r.ok) throw new Error(`Install failed: ${await r.text()}`);
+  if (!r.body) throw new Error('No response body');
+
+  const reader = r.body.getReader();
+  const dec    = new TextDecoder();
+  let buf      = '';
+  let result: Plugin | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n'); buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      const json = t.slice(5).trim();
+      if (json === '[DONE]') break;
+      try {
+        const obj = JSON.parse(json) as { status: string; message?: string; plugin?: Plugin };
+        if (obj.status === 'done' && obj.plugin) result = obj.plugin;
+        else if (obj.message) onLine(obj.message);
+        if (obj.status === 'error') throw new Error(obj.message ?? 'Install failed');
+      } catch (e) {
+        if (e instanceof Error && !e.message.includes('JSON')) throw e;
+      }
+    }
+  }
+
+  if (!result) throw new Error('Install completed but no plugin data returned');
+  return result;
+}
+
+export async function pluginsRemove(source: string): Promise<void> {
+  const r = await fetch(`${SERVE_BASE()}/plugins/${encodeURIComponent(source)}`, { method: 'DELETE' });
+  if (!r.ok) throw new Error(`Remove failed: ${await r.text()}`);
+}
+
+export async function pluginsSetEnabled(source: string, enabled: boolean): Promise<void> {
+  await fetch(`${SERVE_BASE()}/plugins/${encodeURIComponent(source)}/enabled`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function pluginsSearch(query = 'pi-package'): Promise<PluginSearchResult[]> {
+  try {
+    const r = await fetch(`${SERVE_BASE()}/plugins/search?q=${encodeURIComponent(query)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) return [];
+    return r.json() as Promise<PluginSearchResult[]>;
+  } catch { return []; }
+}

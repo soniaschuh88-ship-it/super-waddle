@@ -3,28 +3,42 @@
  *
  * Single process that:
  *   1. Serves the built React app from ../dist/  (SPA with HTML fallback)
- *   2. Exposes /api/ endpoints to start / stop the two model servers
- *      so the admin panel can control them without a separate manager.
- *   3. Logs everything to the console with clean prefixes.
+ *   2. Exposes /api/* endpoints for model server management
+ *   3. Exposes /agent/* endpoints for the coding agent (pi-agent-core)
+ *   4. Exposes /plugins/* endpoints for the plugin manager
+ *   5. Exposes /settings/* endpoints for agent configuration
  *
  * Usage:
  *   node server/serve.js
  *
  * Environment variables:
- *   PORT          HTTP port for this server          (default: 3000)
- *   HOST          Bind address                       (default: 0.0.0.0)
- *   LLAMA_PORT    Port the llama-cpp server uses     (default: 8001)
- *   OLLAMA_PORT   Port Ollama listens on             (default: 11434)
- *   DIST_DIR      Path to built app files            (default: ../dist)
+ *   PORT          HTTP port for this server (default: 3000)
+ *   HOST          Bind address             (default: 0.0.0.0)
+ *   LLAMA_PORT    llama-cpp server port    (default: 8001)
+ *   OLLAMA_PORT   Ollama port              (default: 11434)
+ *   DIST_DIR      Path to built app        (default: ../dist)
  */
 
-import express         from 'express';
-import cors            from 'cors';
-import { createServer }from 'http';
-import { spawn }       from 'child_process';
-import { readdir }     from 'fs/promises';
-import { join, extname, resolve, dirname } from 'path';
+import express          from 'express';
+import cors             from 'cors';
+import { createServer } from 'http';
+import { spawn }        from 'child_process';
+import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+
+import {
+  startSession, sendMessage, abortSession,
+  subscribeSSE, listSessions, getSessionEvents,
+  disposeSession, readSettings, writeSettings,
+} from './agent.js';
+
+import {
+  install as pluginInstall,
+  remove  as pluginRemove,
+  list    as pluginList,
+  setEnabled as pluginSetEnabled,
+  searchNpm,
+} from './plugins.js';
 
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
@@ -34,7 +48,7 @@ const HOST        = process.env.HOST                  ?? '0.0.0.0';
 const LLAMA_PORT  = parseInt(process.env.LLAMA_PORT  ?? '8001',  10);
 const OLLAMA_PORT = parseInt(process.env.OLLAMA_PORT ?? '11434', 10);
 
-// ── Process state ─────────────────────────────────────────────────────────────
+// ── Model server process management ──────────────────────────────────────────
 
 const state = {
   llama:  { proc: null, logs: [] },
@@ -55,17 +69,15 @@ async function isPortOpen(port) {
 }
 
 async function serverStatus(name) {
-  const port      = name === 'llama' ? LLAMA_PORT : OLLAMA_PORT;
-  const proc      = state[name].proc;
-  const running   = proc != null && !proc.killed;
-  const reachable = await isPortOpen(port);
-  return { name, pid: proc?.pid ?? null, running, reachable, port };
+  const port    = name === 'llama' ? LLAMA_PORT : OLLAMA_PORT;
+  const proc    = state[name].proc;
+  const running = proc != null && !proc.killed;
+  return { name, pid: proc?.pid ?? null, running, reachable: await isPortOpen(port), port };
 }
 
 function startLlama(env = {}) {
   if (state.llama.proc && !state.llama.proc.killed)
     return { error: 'Already running', pid: state.llama.proc.pid };
-
   const child = spawn(process.execPath, [join(__dir, 'index.js')], {
     cwd: __dir,
     env: { ...process.env, PORT: String(LLAMA_PORT), ...env },
@@ -73,24 +85,15 @@ function startLlama(env = {}) {
   });
   child.stdout.on('data', d => d.toString().split('\n').forEach(l => l && pushLog('llama', l)));
   child.stderr.on('data', d => d.toString().split('\n').forEach(l => l && pushLog('llama', `ERR ${l}`)));
-  child.on('exit',  c => { pushLog('llama', `exited (${c})`);        state.llama.proc = null; });
-  child.on('error', e => { pushLog('llama', `error: ${e.message}`);  state.llama.proc = null; });
+  child.on('exit',  c => { pushLog('llama', `exited (${c})`);       state.llama.proc = null; });
+  child.on('error', e => { pushLog('llama', `error: ${e.message}`); state.llama.proc = null; });
   state.llama.proc = child;
   pushLog('llama', `started PID ${child.pid}`);
   return { pid: child.pid };
 }
-
-function stopLlama() {
-  if (!state.llama.proc || state.llama.proc.killed) return { error: 'Not running' };
-  state.llama.proc.kill('SIGTERM');
-  pushLog('llama', 'SIGTERM sent');
-  return { ok: true };
-}
-
+function stopLlama()  { if (!state.llama.proc || state.llama.proc.killed) return { error:'Not running' }; state.llama.proc.kill('SIGTERM'); return { ok:true }; }
 function startOllama() {
-  if (state.ollama.proc && !state.ollama.proc.killed)
-    return { error: 'Already running', pid: state.ollama.proc.pid };
-
+  if (state.ollama.proc && !state.ollama.proc.killed) return { error:'Already running', pid: state.ollama.proc.pid };
   const child = spawn('ollama', ['serve'], {
     env: { ...process.env, OLLAMA_HOST: `127.0.0.1:${OLLAMA_PORT}` },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -103,46 +106,37 @@ function startOllama() {
   pushLog('ollama', `started PID ${child.pid}`);
   return { pid: child.pid };
 }
+function stopOllama() { if (!state.ollama.proc || state.ollama.proc.killed) return { error:'Not running' }; state.ollama.proc.kill('SIGTERM'); return { ok:true }; }
 
-function stopOllama() {
-  if (!state.ollama.proc || state.ollama.proc.killed) return { error: 'Not running' };
-  state.ollama.proc.kill('SIGTERM');
-  pushLog('ollama', 'SIGTERM sent');
-  return { ok: true };
-}
-
-// ── Express ───────────────────────────────────────────────────────────────────
+// ── Express app ───────────────────────────────────────────────────────────────
 
 const app = express();
-app.use(cors({ origin: '*' }));
-app.use(express.json());
+app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type'] }));
+app.use(express.json({ limit: '8mb' }));
 
-// ── /api/* — manager endpoints ────────────────────────────────────────────────
+// ── /api/* — model server manager ────────────────────────────────────────────
 
 app.get('/api/status', async (_req, res) => {
   const [llama, ollama] = await Promise.all([serverStatus('llama'), serverStatus('ollama')]);
   res.json({ llama, ollama });
 });
-
 app.get('/api/logs/:server', (req, res) => {
   const name = req.params.server;
   if (name !== 'llama' && name !== 'ollama') return res.status(400).json({ error: 'Unknown' });
   res.json({ lines: state[name].logs.slice(-100) });
 });
-
 app.post('/api/llama/start', (req, res) => {
   const { modelPath, nCtx, gpuLayers } = req.body ?? {};
   const env = {};
-  if (modelPath)              env['MODEL_PATH']  = modelPath;
-  if (nCtx)                   env['N_CTX']       = String(nCtx);
-  if (gpuLayers !== undefined)env['GPU_LAYERS']  = String(gpuLayers);
+  if (modelPath)              env['MODEL_PATH'] = modelPath;
+  if (nCtx)                   env['N_CTX']      = String(nCtx);
+  if (gpuLayers !== undefined)env['GPU_LAYERS'] = String(gpuLayers);
   res.json(startLlama(env));
 });
 app.post('/api/llama/stop',   (_req, res) => res.json(stopLlama()));
 app.post('/api/ollama/start', (_req, res) => res.json(startOllama()));
 app.post('/api/ollama/stop',  (_req, res) => res.json(stopOllama()));
 
-// Systemd snippets
 app.get('/api/systemd-units', (_req, res) => {
   const user = process.env.USER ?? 'ubuntu';
   const node = process.execPath;
@@ -150,42 +144,180 @@ app.get('/api/systemd-units', (_req, res) => {
   res.json({
     llama: {
       unitFile: `/etc/systemd/system/icadp-llama.service`,
-      content: `[Unit]
-Description=ICADP node-llama-cpp inference server
-After=network.target
-
-[Service]
-Type=simple
-User=${user}
-WorkingDirectory=${dir}
-ExecStart=${node} ${join(dir,'index.js')}
-Restart=on-failure
-RestartSec=5
-Environment=PORT=${LLAMA_PORT}
-
-[Install]
-WantedBy=multi-user.target`,
-      commands: [
-        `sudo nano /etc/systemd/system/icadp-llama.service`,
-        `sudo systemctl daemon-reload`,
-        `sudo systemctl enable --now icadp-llama`,
-        `sudo systemctl status icadp-llama`,
-      ],
+      content: `[Unit]\nDescription=ICADP node-llama-cpp inference server\nAfter=network.target\n\n[Service]\nType=simple\nUser=${user}\nWorkingDirectory=${dir}\nExecStart=${node} ${join(dir,'index.js')}\nRestart=on-failure\nRestartSec=5\nEnvironment=PORT=${LLAMA_PORT}\n\n[Install]\nWantedBy=multi-user.target`,
+      commands: [`sudo nano /etc/systemd/system/icadp-llama.service`,`sudo systemctl daemon-reload`,`sudo systemctl enable --now icadp-llama`,`sudo systemctl status icadp-llama`],
     },
     ollama: {
       installCommand: `curl -fsSL https://ollama.com/install.sh | sh`,
-      commands: [
-        `sudo systemctl enable --now ollama`,
-        `sudo systemctl status ollama`,
-        `# Or manual: ollama serve`,
-      ],
+      commands: [`sudo systemctl enable --now ollama`,`sudo systemctl status ollama`,`# Or manual: ollama serve`],
     },
   });
 });
 
+// ── /agent/* — coding agent ───────────────────────────────────────────────────
+
+/**
+ * POST /agent/session
+ * Start a new agent session.
+ * Body: { cwd?, systemPrompt?, tools?, initialMessage? }
+ */
+app.post('/agent/session', async (req, res) => {
+  try {
+    const result = await startSession(req.body ?? {});
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /agent/session/:id/events
+ * SSE stream of all events for a session.
+ * After=N query param: skip first N buffered events (for reconnect).
+ */
+app.get('/agent/session/:id/events', (req, res) => {
+  subscribeSSE(req.params.id, req, res);
+});
+
+/**
+ * GET /agent/session/:id/poll?after=N
+ * Long-poll alternative to SSE — returns new events since index N.
+ */
+app.get('/agent/session/:id/poll', (req, res) => {
+  const after  = parseInt(req.query.after ?? '0', 10);
+  const events = getSessionEvents(req.params.id, after);
+  if (events === null) return res.status(404).json({ error: 'Session not found' });
+  res.json({ events, total: (getSessionEvents(req.params.id) ?? []).length });
+});
+
+/**
+ * POST /agent/session/:id/message
+ * Send a user message to the running agent.
+ * Body: { text: string }
+ */
+app.post('/agent/session/:id/message', async (req, res) => {
+  const { text } = req.body ?? {};
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  try {
+    await sendMessage(req.params.id, text);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /agent/session/:id/abort
+ * Abort the current agent turn.
+ */
+app.post('/agent/session/:id/abort', (req, res) => {
+  abortSession(req.params.id);
+  res.json({ ok: true });
+});
+
+/**
+ * DELETE /agent/session/:id
+ * Dispose a session (cleans up memory).
+ */
+app.delete('/agent/session/:id', (req, res) => {
+  disposeSession(req.params.id);
+  res.json({ ok: true });
+});
+
+/**
+ * GET /agent/sessions
+ * List active sessions.
+ */
+app.get('/agent/sessions', (_req, res) => {
+  res.json(listSessions());
+});
+
+// ── /plugins/* — plugin manager ───────────────────────────────────────────────
+
+/**
+ * GET /plugins
+ * List installed plugins.
+ */
+app.get('/plugins', (_req, res) => {
+  res.json(pluginList());
+});
+
+/**
+ * POST /plugins/install
+ * Install a plugin. Body: { source: "npm:@pkg" | "git:host/user/repo" }
+ * Streams SSE progress.
+ */
+app.post('/plugins/install', async (req, res) => {
+  const { source } = req.body ?? {};
+  if (!source) return res.status(400).json({ error: 'source is required' });
+
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  try {
+    const entry = await pluginInstall(source, (line) => send({ status: 'progress', message: line }));
+    send({ status: 'done', plugin: entry });
+  } catch (e) {
+    send({ status: 'error', message: e.message });
+  }
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+});
+
+/**
+ * DELETE /plugins/:source  (URL-encoded)
+ * Remove a plugin.
+ */
+app.delete('/plugins/:source', async (req, res) => {
+  try {
+    await pluginRemove(decodeURIComponent(req.params.source));
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * PUT /plugins/:source/enabled
+ * Enable or disable a plugin. Body: { enabled: boolean }
+ */
+app.put('/plugins/:source/enabled', (req, res) => {
+  const { enabled } = req.body ?? {};
+  try {
+    pluginSetEnabled(decodeURIComponent(req.params.source), !!enabled);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /plugins/search?q=…
+ * Search npm for pi-compatible packages.
+ */
+app.get('/plugins/search', async (req, res) => {
+  const q       = req.query.q ?? 'pi-package';
+  const results = await searchNpm(q);
+  res.json(results);
+});
+
+// ── /settings — agent config ──────────────────────────────────────────────────
+
+app.get('/settings', (_req, res) => {
+  res.json(readSettings());
+});
+
+app.put('/settings', (req, res) => {
+  const updated = writeSettings(req.body ?? {});
+  res.json(updated);
+});
+
 // ── Static file serving (SPA) ─────────────────────────────────────────────────
 
-// Serve static assets; unknown paths fall back to index.html
 app.use(express.static(DIST, { maxAge: 0 }));
 app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
 
@@ -193,16 +325,17 @@ app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
 
 app.listen(PORT, HOST, () => {
   console.log(`
-╔══════════════════════════════════════════════════════╗
-║       ICADP 3.0 — Unified Server                     ║
-╠══════════════════════════════════════════════════════╣
-║  App     : http://localhost:${PORT}                    
-║  Admin   : http://localhost:${PORT}/admin              
-║  API     : http://localhost:${PORT}/api/status         
-╠══════════════════════════════════════════════════════╣
-║  Controls node-llama-cpp (port ${LLAMA_PORT}) and       
-║  Ollama (port ${OLLAMA_PORT}) via /api/ endpoints      
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║       ICADP 3.0 — Unified Server  (pi-agent-core)       ║
+╠══════════════════════════════════════════════════════════╣
+║  App       : http://localhost:${PORT}
+║  Admin     : http://localhost:${PORT}/admin
+╠══════════════════════════════════════════════════════════╣
+║  /api/*     model server manager  (llama-cpp + ollama)  ║
+║  /agent/*   coding agent          (pi-agent-core)       ║
+║  /plugins/* plugin manager        (pi-compatible pkgs)  ║
+║  /settings  agent configuration                         ║
+╚══════════════════════════════════════════════════════════╝
 `);
 });
 

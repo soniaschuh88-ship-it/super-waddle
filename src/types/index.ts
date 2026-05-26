@@ -92,6 +92,71 @@ export interface Project {
 
 export interface EngineProgress { progress: number; text: string; }
 
+// ── Pi Agent / ICADP Coding Agent ─────────────────────────────────────────────
+
+/** A live agent session (backed by pi-agent-core). */
+export interface AgentSession {
+  sessionId: string;
+  cwd:       string;
+  model:     string;
+  startedAt: string;
+  eventCount: number;
+}
+
+/** An agent event streamed from the server. */
+export interface AgentEvent {
+  type:       string;
+  _ts:        number;
+  _session:   string;
+  // message_update
+  assistantMessageEvent?: { type: string; delta?: string; text?: string };
+  // tool_call / tool_result
+  toolName?:  string;
+  toolCallId?:string;
+  input?:     Record<string, unknown>;
+  result?:    { content: Array<{ type: string; text?: string }>; isError: boolean };
+  // agent_start / agent_end
+  messages?:  unknown[];
+}
+
+/** Agent settings stored at ~/.icadp/settings.json */
+export interface AgentSettings {
+  backendType:         'llama-cpp' | 'ollama';
+  serverUrl:           string;
+  modelId:             string;
+  tools:               string[];
+  systemPromptPrefix:  string;
+  defaultCwd:          string;
+  contextWindow:       number;
+  maxTokens:           number;
+}
+
+/** An installed pi-compatible plugin. */
+export interface Plugin {
+  source:      string;
+  type:        'npm' | 'git';
+  name:        string;
+  version?:    string;
+  installDir:  string;
+  resources:   {
+    extensions: string[];
+    skills:     string[];
+    prompts:    string[];
+    themes:     string[];
+  };
+  installedAt: string;
+  enabled:     boolean;
+}
+
+/** npm search result for pi packages */
+export interface PluginSearchResult {
+  name:        string;
+  version:     string;
+  description: string;
+  keywords:    string[];
+  source:      string;  // "npm:@scope/pkg"
+}
+
 // ── Code Studio ────────────────────────────────────────────────────────────────
 
 /** A real generated code file (not simulated). */
