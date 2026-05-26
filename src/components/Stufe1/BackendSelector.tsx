@@ -1,97 +1,102 @@
 /**
  * src/components/Stufe1/BackendSelector.tsx
  *
- * User-facing model/backend picker.
+ * Mode-aware model/backend picker for the wizard.
  *
- * Deliberately hides all raw server URLs — those live exclusively in
- * Admin → Agent Settings.  Users only see:
- *   • Backend type labels  (WebGPU / Ollama / node-llama-cpp)
- *   • Model names          (pulled live from the running server)
- *   • Online / offline status
+ * PRIVATE MODE: WebGPU / Ollama / node-llama-cpp (local only)
+ *   — Only shows models from online servers
+ *   — Server URLs never displayed to users
  *
- * The actual serverUrl is read from state.backendConfig (set by admin)
- * and used silently for API calls.
+ * CLOUD MODE: Free provider selection (Groq, NVIDIA, OpenRouter, etc.)
+ *   — Routes through /providers/proxy on serve.js
+ *   — Uses user's API keys → admin global → anon/free
  */
 
 import { useState, useCallback, useEffect } from 'react';
 import {
-  Cpu, Server, HardDrive,
-  ChevronDown, ChevronUp,
-  CheckCircle, XCircle, Loader2, RefreshCw, AlertTriangle, Wifi, WifiOff,
+  Cpu, Server, HardDrive, Cloud, Lock,
+  ChevronDown, ChevronUp, CheckCircle,
+  Loader2, RefreshCw, AlertTriangle, WifiOff, Wifi, Key,
 } from 'lucide-react';
-import { useAppState } from '@/context/AppContext';
+import { useAppState }   from '@/context/AppContext';
 import {
-  MODEL_OPTIONS, DEFAULT_MODEL_ID,
-  getCachedModelIds, isEngineLoading,
+  MODEL_OPTIONS, DEFAULT_MODEL_ID, getCachedModelIds, isEngineLoading,
 } from '@/lib/webllm';
 import {
-  pingRestBackend,
-  ollamaListModels,
-  llamaCppListModels,
-  OLLAMA_POPULAR_MODELS,
-  LLAMA_CPP_RECOMMENDED,
-  filterByMaxSize,
+  pingRestBackend, ollamaListModels, llamaCppListModels,
+  OLLAMA_POPULAR_MODELS, LLAMA_CPP_RECOMMENDED, filterByMaxSize,
 } from '@/lib/llm-client';
 import type { BackendType, BackendConfig } from '@/types';
 
-// ── Backend definitions (no URLs) ─────────────────────────────────────────────
-
-interface BackendDef {
-  type:    BackendType;
-  label:   string;
-  icon:    React.FC<{ size?: number; className?: string }>;
-  hint:    string;           // shown in collapsed bar when offline
-}
-
-const DEFS: BackendDef[] = [
-  { type:'webgpu',    label:'WebGPU',          icon:Cpu,       hint:'in-browser · Chrome/Edge' },
-  { type:'ollama',    label:'Ollama',           icon:Server,    hint:'local server' },
-  { type:'llama-cpp', label:'node-llama-cpp',   icon:HardDrive, hint:'local GGUF' },
-];
-
-// ── Shimmer (indeterminate loading bar) ───────────────────────────────────────
+// ── Shimmer bar ───────────────────────────────────────────────────────────────
 
 function Shimmer() {
   return (
-    <div className="relative h-1 w-full rounded-full bg-border overflow-hidden">
-      <div
-        className="absolute inset-y-0 w-1/3 bg-accent/50 rounded-full"
-        style={{ animation: 'shimmer 1.4s ease-in-out infinite' }}
-      />
-      <style>{`@keyframes shimmer{0%{left:-33%}100%{left:133%}}`}</style>
+    <div className="h-0.5 w-full rounded-full bg-border/40 overflow-hidden relative">
+      <div className="absolute inset-y-0 w-2/5 bg-accent/40 rounded-full"
+        style={{ animation: 'progressShimmer 1.4s ease-in-out infinite', left: '-40%' }}/>
     </div>
   );
 }
 
-// ── Online badge ──────────────────────────────────────────────────────────────
+// ── Local backend definitions ─────────────────────────────────────────────────
 
-function OnlineBadge({ online, loading }: { online: boolean | null; loading?: boolean }) {
-  if (loading) return <Loader2 size={12} className="text-accent animate-spin"/>;
-  if (online === null) return null;
-  return online
-    ? <Wifi size={12} className="text-success" aria-label="Server reachable"/>
-    : <WifiOff size={12} className="text-error/70" aria-label="Server offline"/>;
+const LOCAL_DEFS = [
+  { type: 'webgpu'    as BackendType, label: 'WebGPU',      Icon: Cpu,       color: '#00e5ff', hint: 'In-browser' },
+  { type: 'ollama'    as BackendType, label: 'Ollama',       Icon: Server,    color: '#a855f7', hint: 'Local API'  },
+  { type: 'llama-cpp' as BackendType, label: 'llama-cpp',    Icon: HardDrive, color: '#3b82f6', hint: 'Local GGUF' },
+];
+
+// ── Cloud provider tiers for wizard ──────────────────────────────────────────
+
+interface ProviderDef {
+  id:         string;
+  name:       string;
+  tier:       string;
+  hasKey:     boolean;
+  anonAccess: boolean;
+  source:     string;
 }
+
+const DEFAULT_CLOUD_MODELS: Record<string, string> = {
+  groq:          'llama-3.3-70b-versatile',
+  nvidia:        'meta/llama-3.1-8b-instruct',
+  openrouter:    'meta-llama/llama-3.2-1b-instruct:free',
+  mistral:       'mistral-small-latest',
+  sambanova:     'Meta-Llama-3.3-70B-Instruct',
+  llm7:          'default',
+  kilo:          'kilo-mini',
+  cerebras:      'llama3.1-8b',
+  together:      'meta-llama/Llama-3.2-3B-Instruct-Turbo',
+};
+
+const TIER_COLOR: Record<string, string> = {
+  free:     '#00e5a0',
+  freemium: '#00e5ff',
+  dynamic:  '#3b82f6',
+  paid:     '#ffb300',
+};
 
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function BackendSelector() {
   const { state, dispatch } = useAppState();
-  const { backendConfig }   = state;
+  const { backendConfig, mode } = state;
+  const isPrivate = mode !== 'cloud';
 
-  const [expanded,      setExpanded]      = useState(false);
-  const [onlySmall,     setOnlySmall]     = useState(true);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [serverOnline,  setServerOnline]  = useState<boolean | null>(null);
-  const [cachedIds,     setCachedIds]     = useState<string[]>([]);
+  const [expanded,       setExpanded]       = useState(false);
+  const [onlySmall,      setOnlySmall]      = useState(true);
+  const [loadingModels,  setLoadingModels]  = useState(false);
+  const [serverOnline,   setServerOnline]   = useState<boolean | null>(null);
+  const [cachedIds,      setCachedIds]      = useState<string[]>([]);
+  const [ollamaModels,   setOllamaModels]   = useState<string[] | null>(null);
+  const [llamaModels,    setLlamaModels]    = useState<string[] | null>(null);
+  const [cloudProviders, setCloudProviders] = useState<ProviderDef[]>([]);
 
-  // Live model lists (null = not yet fetched)
-  const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
-  const [llamaModels,  setLlamaModels]  = useState<string[] | null>(null);
-
-  // ── Fetch helpers ───────────────────────────────────────────────────────────
+  // ── Fetch helpers ──────────────────────────────────────────────────────────
 
   const checkAndFetch = useCallback(async (cfg: BackendConfig) => {
+    if (!isPrivate) return;
     if (cfg.type === 'webgpu') {
       try { setCachedIds(await getCachedModelIds()); } catch { /**/ }
       return;
@@ -112,334 +117,396 @@ export function BackendSelector() {
       if (cfg.type === 'llama-cpp') setLlamaModels([]);
     }
     setLoadingModels(false);
+  }, [isPrivate]);
+
+  const fetchCloudProviders = useCallback(async () => {
+    try {
+      const r = await fetch('/providers/list');
+      if (!r.ok) return;
+      const d = await r.json() as { providers: ProviderDef[] };
+      setCloudProviders(d.providers ?? []);
+    } catch { /**/ }
   }, []);
 
-  // Fetch when expanded or backend changes
   useEffect(() => {
     if (!expanded) return;
-    setOllamaModels(null); setLlamaModels(null); setServerOnline(null);
-    void checkAndFetch(backendConfig);
+    if (!isPrivate) {
+      void fetchCloudProviders();
+    } else {
+      setOllamaModels(null); setLlamaModels(null); setServerOnline(null);
+      void checkAndFetch(backendConfig);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, backendConfig.type, backendConfig.serverUrl]);
+  }, [expanded, backendConfig.type, backendConfig.serverUrl, mode]);
 
-  // ── Model selection ─────────────────────────────────────────────────────────
+  // ── Selection helpers ──────────────────────────────────────────────────────
 
-  const setModel = (modelId: string) => {
-    dispatch({
-      type: 'SET_BACKEND',
-      config: { ...backendConfig, modelId },
-    });
-  };
+  const setModel = (modelId: string) =>
+    dispatch({ type: 'SET_BACKEND', config: { ...backendConfig, modelId } });
 
-  const setBackendType = (type: BackendType) => {
-    // Preserve serverUrl from current config; just change type + pick a sensible default model
+  const setLocalType = (type: BackendType) => {
     const defaults: Record<BackendType, string> = {
       webgpu:       DEFAULT_MODEL_ID,
-      ollama:       'qwen2.5:1.5b',
-      'llama-cpp':  '',
+      ollama:       ollamaModels?.[0] ?? 'qwen2.5:1.5b',
+      'llama-cpp':  llamaModels?.[0] ?? '',
+      cloud:        '',
     };
-    dispatch({
-      type: 'SET_BACKEND',
-      config: { ...backendConfig, type, modelId: defaults[type] },
-    });
+    dispatch({ type: 'SET_BACKEND', config: { ...backendConfig, type, modelId: defaults[type] } });
     setOllamaModels(null); setLlamaModels(null); setServerOnline(null);
   };
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
+  const setCloudProvider = (providerId: string, modelId?: string) => {
+    const model = modelId ?? DEFAULT_CLOUD_MODELS[providerId] ?? 'default';
+    dispatch({
+      type: 'SET_BACKEND',
+      config: { ...backendConfig, type: 'cloud', modelId: `${providerId}/${model}`, providerId },
+    });
+  };
 
-  const active         = DEFS.find(d => d.type === backendConfig.type)!;
-  const Icon           = active.icon;
+  // ── Derived state ──────────────────────────────────────────────────────────
+
+  const active         = LOCAL_DEFS.find(d => d.type === backendConfig.type);
   const engineLoading  = isEngineLoading();
 
-  const webgpuList     = onlySmall
-    ? filterByMaxSize(MODEL_OPTIONS, 1.0)
-    : MODEL_OPTIONS;
+  const webgpuList     = onlySmall ? filterByMaxSize(MODEL_OPTIONS, 1.0) : MODEL_OPTIONS;
+  const ollamaDisplay  = ollamaModels !== null && ollamaModels.length > 0
+    ? ollamaModels
+    : (onlySmall ? filterByMaxSize(OLLAMA_POPULAR_MODELS, 1.0) : OLLAMA_POPULAR_MODELS).map(m => m.name);
+  const llamaDisplay   = llamaModels !== null && llamaModels.length > 0
+    ? llamaModels.map(id => ({ id, label: id, real: true }))
+    : (onlySmall ? filterByMaxSize(LLAMA_CPP_RECOMMENDED, 1.0) : LLAMA_CPP_RECOMMENDED).map(m => ({ id: m.uri, label: m.label, real: false }));
 
-  const ollamaDisplay: string[] =
-    ollamaModels !== null && ollamaModels.length > 0
-      ? ollamaModels
-      : (onlySmall ? filterByMaxSize(OLLAMA_POPULAR_MODELS, 1.0) : OLLAMA_POPULAR_MODELS)
-          .map(m => m.name);
+  // Cloud label
+  const cloudLabel = backendConfig.type === 'cloud'
+    ? backendConfig.modelId ?? 'Select provider'
+    : 'No cloud model selected';
 
-  const llamaDisplay: { id: string; label: string; real: boolean }[] =
-    llamaModels !== null && llamaModels.length > 0
-      ? llamaModels.map(id => ({ id, label: id, real: true }))
-      : (onlySmall ? filterByMaxSize(LLAMA_CPP_RECOMMENDED, 1.0) : LLAMA_CPP_RECOMMENDED)
-          .map(m => ({ id: m.uri, label: m.label, real: false }));
+  // Private label
+  const privateLabel = backendConfig.type !== 'cloud'
+    ? (backendConfig.type === 'webgpu'
+        ? (MODEL_OPTIONS.find(m => m.id === backendConfig.modelId)?.label ?? backendConfig.modelId)
+        : backendConfig.modelId || '(auto)')
+    : '';
 
-  // Human-readable model label for the collapsed bar
-  const modelLabel =
-    backendConfig.type === 'webgpu'
-      ? MODEL_OPTIONS.find(m => m.id === backendConfig.modelId)?.label ?? backendConfig.modelId
-      : backendConfig.modelId || '(auto-detect)';
+  const isCloud = backendConfig.type === 'cloud';
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="rounded-lg border border-border bg-surface overflow-hidden">
-
-      {/* ── Collapsed bar ── */}
+    <div
+      className="rounded-2xl border overflow-hidden transition-all"
+      style={{
+        borderColor: expanded ? 'rgba(0,229,255,0.2)' : 'rgba(13,42,64,0.8)',
+        background: 'rgba(6,15,30,0.85)',
+        boxShadow: expanded ? '0 0 20px rgba(0,229,255,0.06)' : undefined,
+      }}
+    >
+      {/* Collapsed bar */}
       <button
         onClick={() => setExpanded(p => !p)}
-        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-panel transition-colors"
+        className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/2 transition-colors"
       >
-        <div className="flex items-center justify-center w-6 h-6 rounded-md bg-accent/10 border border-accent/20 flex-shrink-0">
-          <Icon size={13} className={engineLoading ? 'text-accent animate-spin' : 'text-accent'}/>
+        <div
+          className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 border"
+          style={{
+            background: 'rgba(0,229,255,0.08)',
+            borderColor: 'rgba(0,229,255,0.2)',
+          }}
+        >
+          {isPrivate
+            ? <Lock size={13} className={engineLoading ? 'text-amber animate-pulse' : 'text-amber'}/>
+            : <Cloud size={13} className="text-accent"/>}
         </div>
 
-        {/* Backend + model label */}
         <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span className="text-xs font-semibold text-text-primary">{active.label}</span>
-          {backendConfig.type !== 'webgpu' && (
-            <OnlineBadge online={serverOnline} loading={loadingModels && !expanded}/>
-          )}
-          {backendConfig.modelId && (
-            <span className="text-[11px] text-muted font-mono truncate hidden sm:inline">
-              · {modelLabel}
-            </span>
-          )}
+          <span className="text-xs font-semibold text-text-primary">
+            {isPrivate ? 'Private Mode' : 'Cloud Mode'}
+          </span>
+          <span className="text-[10px] font-mono text-muted/60 truncate hidden sm:inline">
+            · {isPrivate ? (active?.label ?? '') + ' · ' + (privateLabel.slice(0, 32)) : cloudLabel.slice(0, 40)}
+          </span>
         </div>
 
-        <span className="text-[10px] font-medium text-muted uppercase tracking-wider flex-shrink-0">Model</span>
-        {expanded
-          ? <ChevronUp  size={13} className="text-muted flex-shrink-0"/>
-          : <ChevronDown size={13} className="text-muted flex-shrink-0"/>}
+        <span className="text-[10px] text-muted/40 uppercase tracking-wider flex-shrink-0">Model</span>
+        {expanded ? <ChevronUp size={12} className="text-muted/50 flex-shrink-0"/> : <ChevronDown size={12} className="text-muted/50 flex-shrink-0"/>}
       </button>
 
-      {/* ── Expanded panel ── */}
+      {/* Expanded panel */}
       {expanded && (
-        <div className="border-t border-border px-4 py-3 flex flex-col gap-3">
-
-          {/* Size filter + refresh */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setOnlySmall(p => !p)}
-              className={[
-                'flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-full border transition-colors',
-                onlySmall
-                  ? 'bg-accent/15 border-accent/40 text-accent'
-                  : 'bg-base border-border text-muted hover:border-accent/30',
-              ].join(' ')}
-            >
-              {onlySmall ? '≤ 1B models' : 'All sizes'}
-            </button>
-
-            {backendConfig.type !== 'webgpu' && (
-              <button
-                onClick={() => void checkAndFetch(backendConfig)}
-                disabled={loadingModels}
-                className="text-[11px] text-muted hover:text-accent transition-colors flex items-center gap-1"
-              >
-                <RefreshCw size={11} className={loadingModels ? 'animate-spin' : ''}/>
-                {loadingModels ? 'Checking…' : 'Refresh'}
-              </button>
-            )}
-
-            {/* Subtle server status — no URL shown */}
-            {backendConfig.type !== 'webgpu' && serverOnline !== null && (
-              <span className={`text-[11px] flex items-center gap-1 ${serverOnline ? 'text-success' : 'text-error/70'}`}>
-                {serverOnline
-                  ? <><CheckCircle size={10}/>Server online</>
-                  : <><XCircle size={10}/>Server offline — start it in Admin</>}
-              </span>
-            )}
-          </div>
+        <div className="border-t border-accent/8 px-4 py-4 flex flex-col gap-4">
 
           {/* Loading bar */}
           {loadingModels && <Shimmer/>}
 
-          {/* ── Backend type pills ── */}
-          <div className="flex gap-2 flex-wrap">
-            {DEFS.map(def => {
-              const DI = def.icon;
-              const active_ = def.type === backendConfig.type;
-              return (
+          {/* ── PRIVATE MODE ── */}
+          {isPrivate && (
+            <>
+              {/* Size filter */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  key={def.type}
-                  onClick={() => setBackendType(def.type)}
+                  onClick={() => setOnlySmall(p => !p)}
                   className={[
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                    active_
-                      ? 'bg-accent/15 border-accent/50 text-accent'
-                      : 'bg-base border-border text-muted hover:border-accent/30 hover:text-text-primary',
+                    'flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold rounded-full border transition-all',
+                    onlySmall
+                      ? 'bg-accent/15 border-accent/40 text-accent'
+                      : 'bg-base/80 border-border text-muted hover:border-accent/30',
                   ].join(' ')}
                 >
-                  <DI size={12}/>{def.label}
+                  {onlySmall ? '≤ 1B models' : 'All sizes'}
                 </button>
-              );
-            })}
-          </div>
+                {backendConfig.type !== 'webgpu' && (
+                  <button
+                    onClick={() => void checkAndFetch(backendConfig)}
+                    disabled={loadingModels}
+                    className="text-[11px] text-muted/50 hover:text-accent transition-colors flex items-center gap-1"
+                  >
+                    <RefreshCw size={10} className={loadingModels ? 'animate-spin' : ''}/>
+                    {loadingModels ? 'Checking…' : 'Refresh'}
+                  </button>
+                )}
+                {backendConfig.type !== 'webgpu' && serverOnline !== null && (
+                  <span className={[
+                    'text-[11px] flex items-center gap-1',
+                    serverOnline ? 'text-success' : 'text-error/70',
+                  ].join(' ')}>
+                    {serverOnline ? <><Wifi size={10}/>Online</> : <><WifiOff size={10}/>Offline</>}
+                  </span>
+                )}
+              </div>
 
-          {/* ── WebGPU model grid ── */}
-          {backendConfig.type === 'webgpu' && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-muted uppercase tracking-wider">
-                Select model — {webgpuList.length} available
-              </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-52 overflow-y-auto pr-1">
-                {webgpuList.map(m => {
-                  const isCached = cachedIds.includes(m.id);
-                  const sel      = backendConfig.modelId === m.id;
+              {/* Backend type pills */}
+              <div className="flex gap-2 flex-wrap">
+                {LOCAL_DEFS.map(def => {
+                  const isActive = def.type === backendConfig.type;
                   return (
-                    <button key={m.id} onClick={() => setModel(m.id)}
-                      className={[
-                        'text-left px-3 py-2 rounded-lg border transition-all',
-                        sel ? 'bg-accent/15 border-accent/40' : 'bg-base border-border hover:border-accent/30',
-                      ].join(' ')}
+                    <button
+                      key={def.type}
+                      onClick={() => setLocalType(def.type)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all"
+                      style={{
+                        background: isActive ? `${def.color}15` : 'rgba(6,15,30,0.8)',
+                        borderColor: isActive ? `${def.color}40` : 'rgba(13,42,64,0.8)',
+                        color: isActive ? def.color : '#4a6880',
+                        boxShadow: isActive ? `0 0 8px ${def.color}20` : undefined,
+                      }}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <span className={`text-xs font-semibold ${sel ? 'text-accent' : 'text-text-primary'}`}>
-                          {m.label}
-                        </span>
-                        {isCached && <CheckCircle size={10} className="text-success flex-shrink-0"/>}
-                      </div>
-                      <div className="flex items-center justify-between mt-0.5">
-                        <span className="text-[10px] text-muted/70">{m.description}</span>
-                        <span className={`text-[10px] font-mono ${isCached ? 'text-success/70' : 'text-muted/40'}`}>
-                          {isCached ? '✓ cached' : `~${m.sizeMb} MB`}
-                        </span>
-                      </div>
+                      <def.Icon size={12}/>{def.label}
                     </button>
                   );
                 })}
               </div>
-              <p className="text-[11px] text-muted/50">
-                Cached = loads instantly. Uncached = downloads to your browser on first use.
+
+              {/* ── WebGPU models ── */}
+              {backendConfig.type === 'webgpu' && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-bold text-muted/60 uppercase tracking-wider">
+                    {webgpuList.length} models · {cachedIds.length} cached
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                    {webgpuList.map(m => {
+                      const isCached = cachedIds.includes(m.id);
+                      const sel      = backendConfig.modelId === m.id;
+                      return (
+                        <button key={m.id} onClick={() => setModel(m.id)}
+                          className="text-left px-3 py-2 rounded-xl border transition-all"
+                          style={{
+                            background: sel ? 'rgba(0,229,255,0.08)' : 'rgba(3,8,16,0.8)',
+                            borderColor: sel ? 'rgba(0,229,255,0.3)' : 'rgba(13,42,64,0.6)',
+                          }}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-semibold" style={{ color: sel ? '#00e5ff' : '#e8f4f8' }}>
+                              {m.label}
+                            </span>
+                            {isCached && <CheckCircle size={9} className="text-success flex-shrink-0"/>}
+                          </div>
+                          <div className="flex items-center justify-between mt-0.5">
+                            <span className="text-[10px] text-muted/50">{m.description}</span>
+                            <span className="text-[10px] font-mono" style={{ color: isCached ? '#00e5a060' : '#4a688060' }}>
+                              {isCached ? '✓ cached' : `~${m.sizeMb}M`}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Ollama models ── */}
+              {backendConfig.type === 'ollama' && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-bold text-muted/60 uppercase tracking-wider flex items-center gap-1.5">
+                    {ollamaModels !== null && ollamaModels.length > 0
+                      ? <><CheckCircle size={9} className="text-success"/>{ollamaModels.length} installed</>
+                      : ollamaModels !== null ? 'No models installed'
+                      : 'Ollama models'}
+                  </label>
+                  {serverOnline === false && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-error/20 bg-error/5 text-xs text-red-400/80">
+                      <WifiOff size={12} className="mt-0.5 flex-shrink-0"/>
+                      Ollama offline. Start via <strong>Admin → Server Manager</strong>.
+                    </div>
+                  )}
+                  {serverOnline && ollamaModels?.length === 0 && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-warning/20 bg-warning/5 text-xs text-amber/80">
+                      <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
+                      No models. Pull one via <strong>Admin → Ollama Manager</strong>.
+                    </div>
+                  )}
+                  {serverOnline && (ollamaModels?.length ?? 0) > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto">
+                      {ollamaDisplay.filter(name => ollamaModels?.includes(name)).map(name => {
+                        const sel = backendConfig.modelId === name;
+                        return (
+                          <button key={name} onClick={() => setModel(name)}
+                            className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl border transition-all"
+                            style={{
+                              background: sel ? 'rgba(168,85,247,0.08)' : 'rgba(3,8,16,0.8)',
+                              borderColor: sel ? 'rgba(168,85,247,0.3)' : 'rgba(13,42,64,0.6)',
+                            }}>
+                            <CheckCircle size={9} className="text-success flex-shrink-0"/>
+                            <span className="text-[11px] font-mono font-semibold truncate"
+                              style={{ color: sel ? '#a855f7' : '#e8f4f8' }}>
+                              {name}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── llama-cpp models ── */}
+              {backendConfig.type === 'llama-cpp' && (
+                <div className="flex flex-col gap-2">
+                  <label className="text-[10px] font-bold text-muted/60 uppercase tracking-wider flex items-center gap-1.5">
+                    {llamaModels !== null && llamaModels.length > 0
+                      ? <><CheckCircle size={9} className="text-success"/>{llamaModels.length} GGUF files</>
+                      : llamaModels !== null ? 'No GGUF files'
+                      : 'GGUF models'}
+                  </label>
+                  {serverOnline === false && (
+                    <div className="flex items-start gap-2 px-3 py-2 rounded-xl border border-error/20 bg-error/5 text-xs text-red-400/80">
+                      <WifiOff size={12} className="mt-0.5 flex-shrink-0"/>
+                      llama-cpp offline. Start via <strong>Admin → Server Manager</strong>.
+                    </div>
+                  )}
+                  {serverOnline && llamaDisplay.filter(m => m.real).length > 0 && (
+                    <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+                      {llamaDisplay.filter(m => m.real).map(m => {
+                        const sel = backendConfig.modelId === m.id;
+                        return (
+                          <button key={m.id} onClick={() => setModel(m.id)}
+                            className="flex items-center gap-2 px-3 py-2 rounded-xl border transition-all"
+                            style={{
+                              background: sel ? 'rgba(59,130,246,0.08)' : 'rgba(3,8,16,0.8)',
+                              borderColor: sel ? 'rgba(59,130,246,0.3)' : 'rgba(13,42,64,0.6)',
+                            }}>
+                            <CheckCircle size={10} className="text-success flex-shrink-0"/>
+                            <span className="text-xs font-mono font-semibold truncate flex-1"
+                              style={{ color: sel ? '#3b82f6' : '#e8f4f8' }}>
+                              {m.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Server config hint */}
+              {backendConfig.type !== 'webgpu' && (
+                <p className="text-[10px] text-muted/30 border-t border-accent/6 pt-2">
+                  Server address configured in{' '}
+                  <a href="/admin" className="text-accent/60 hover:text-accent hover:underline">Admin → Agent Settings</a>
+                </p>
+              )}
+            </>
+          )}
+
+          {/* ── CLOUD MODE ── */}
+          {!isPrivate && (
+            <div className="flex flex-col gap-3">
+              <p className="text-[11px] text-muted/60">
+                Select a free provider. Keys are resolved: yours → admin global → anonymous.
+              </p>
+
+              {cloudProviders.length === 0 ? (
+                <div className="flex items-center gap-2 text-muted/40 text-xs py-4">
+                  <Loader2 size={12} className="animate-spin"/>Loading providers…
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                  {cloudProviders.filter(p => p.hasKey || p.anonAccess).map(p => {
+                    const isSelected = isCloud && backendConfig.modelId?.startsWith(p.id + '/');
+                    const col = TIER_COLOR[p.tier] ?? '#4a6880';
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => setCloudProvider(p.id)}
+                        className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all"
+                        style={{
+                          background: isSelected ? `${col}10` : 'rgba(3,8,16,0.8)',
+                          borderColor: isSelected ? `${col}35` : 'rgba(13,42,64,0.6)',
+                          boxShadow: isSelected ? `0 0 8px ${col}20` : undefined,
+                        }}
+                      >
+                        <div className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ background: p.anonAccess ? '#00e5a0' : p.hasKey ? '#00e5ff' : '#4a6880' }}/>
+                        <span className="flex-1 text-xs font-semibold" style={{ color: isSelected ? col : '#e8f4f8' }}>
+                          {p.name}
+                        </span>
+                        {p.anonAccess && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full border font-bold"
+                            style={{ borderColor: '#00e5a030', color: '#00e5a0', background: '#00e5a010' }}>
+                            FREE
+                          </span>
+                        )}
+                        {p.hasKey && !p.anonAccess && (
+                          <Key size={9} style={{ color: col + '80' }}/>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* No available providers */}
+              {cloudProviders.length > 0 && cloudProviders.filter(p => p.hasKey || p.anonAccess).length === 0 && (
+                <div className="flex items-start gap-2 px-3 py-3 rounded-xl border border-warning/20 bg-warning/5 text-xs text-amber/80">
+                  <AlertTriangle size={12} className="mt-0.5 flex-shrink-0"/>
+                  <span>
+                    No configured providers. Add API keys in <a href="/#settings" className="underline">My Keys</a> or ask the admin to set global keys.
+                  </span>
+                </div>
+              )}
+
+              {/* Model input for selected provider */}
+              {isCloud && backendConfig.modelId && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-muted/50 uppercase tracking-wider">Model ID</label>
+                  <input
+                    type="text"
+                    value={backendConfig.modelId.split('/').slice(1).join('/') || ''}
+                    onChange={e => {
+                      const providerId = backendConfig.modelId?.split('/')[0] ?? '';
+                      setModel(`${providerId}/${e.target.value}`);
+                    }}
+                    placeholder="e.g. llama-3.3-70b-versatile"
+                    className="bg-base/80 border border-border rounded-xl px-3 py-2 text-xs font-mono text-text-primary focus:outline-none focus:border-accent/40"
+                    style={{ boxShadow: 'none' }}
+                  />
+                </div>
+              )}
+
+              <p className="text-[10px] text-muted/30 border-t border-accent/6 pt-2">
+                Add more keys in <a href="/#settings" className="text-accent/60 hover:text-accent hover:underline">Dashboard → My Keys</a> ·
+                Global fallbacks in <a href="/admin" className="text-accent/60 hover:text-accent hover:underline">Admin → Global Providers</a>
               </p>
             </div>
           )}
-
-          {/* ── Ollama model list ── */}
-          {backendConfig.type === 'ollama' && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-muted uppercase tracking-wider flex items-center gap-1.5">
-                {ollamaModels !== null && ollamaModels.length > 0
-                  ? <><CheckCircle size={10} className="text-success"/>{ollamaModels.length} models installed</>
-                  : ollamaModels !== null
-                  ? 'No models installed'
-                  : 'Available models'}
-              </label>
-
-              {/* Empty / offline messages */}
-              {serverOnline === false && (
-                <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-error/20 bg-error/5 text-xs text-red-400">
-                  <WifiOff size={13} className="flex-shrink-0 mt-0.5"/>
-                  <span>
-                    Ollama server is not running.
-                    Start it via <strong>Admin → Server Manager</strong>, then refresh.
-                  </span>
-                </div>
-              )}
-              {serverOnline && ollamaModels?.length === 0 && (
-                <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/20 bg-warning/5 text-xs text-yellow-400">
-                  <AlertTriangle size={13} className="flex-shrink-0 mt-0.5"/>
-                  <span>
-                    No models installed. Pull one via <strong>Admin → Ollama Manager</strong>.
-                  </span>
-                </div>
-              )}
-
-              {/* Model buttons — only shown when server is online */}
-              {serverOnline && ollamaDisplay.length > 0 && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto pr-1">
-                  {ollamaDisplay.map(name => {
-                    const isReal = ollamaModels !== null && ollamaModels.includes(name);
-                    const sel    = backendConfig.modelId === name;
-                    return (
-                      <button key={name} onClick={() => setModel(name)}
-                        className={[
-                          'flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-left transition-colors',
-                          sel ? 'bg-accent/15 border-accent/40'
-                            : isReal ? 'bg-base border-border hover:border-accent/30'
-                            : 'bg-base border-border hover:border-accent/30 opacity-50',
-                        ].join(' ')}
-                      >
-                        {isReal && <CheckCircle size={10} className="text-success flex-shrink-0"/>}
-                        {!isReal && <HardDrive size={10} className="text-muted/40 flex-shrink-0"/>}
-                        <span className={`text-[11px] font-mono font-semibold truncate ${sel ? 'text-accent' : 'text-text-primary'}`}>
-                          {name}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {ollamaModels === null && !loadingModels && (
-                <p className="text-[11px] text-muted/50">
-                  Pull models via <strong className="text-text-primary">Admin → Ollama Manager</strong>.
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* ── llama-cpp model list ── */}
-          {backendConfig.type === 'llama-cpp' && (
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-muted uppercase tracking-wider flex items-center gap-1.5">
-                {llamaModels !== null && llamaModels.length > 0
-                  ? <><CheckCircle size={10} className="text-success"/>{llamaModels.length} GGUF files available</>
-                  : llamaModels !== null ? 'No GGUF files found'
-                  : 'Available models'}
-              </label>
-
-              {serverOnline === false && (
-                <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-error/20 bg-error/5 text-xs text-red-400">
-                  <WifiOff size={13} className="flex-shrink-0 mt-0.5"/>
-                  <span>
-                    node-llama-cpp server is not running.
-                    Start it via <strong>Admin → Server Manager</strong>, then refresh.
-                  </span>
-                </div>
-              )}
-              {serverOnline && llamaModels?.length === 0 && (
-                <div className="flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/20 bg-warning/5 text-xs text-yellow-400">
-                  <AlertTriangle size={13} className="flex-shrink-0 mt-0.5"/>
-                  <span>
-                    No GGUF files in server/models/.
-                    Download one via <strong>Admin → Download Models</strong>.
-                  </span>
-                </div>
-              )}
-
-              {/* Model buttons — only shown when server is online with real models */}
-              {serverOnline && llamaDisplay.filter(m => m.real).length > 0 && (
-                <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-                  {llamaDisplay.filter(m => m.real).map(m => {
-                    const sel = backendConfig.modelId === m.id;
-                    return (
-                      <button key={m.id} onClick={() => setModel(m.id)}
-                        className={[
-                          'flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors',
-                          sel ? 'bg-accent/15 border-accent/40' : 'bg-base border-border hover:border-accent/30',
-                        ].join(' ')}
-                      >
-                        <CheckCircle size={11} className="text-success flex-shrink-0"/>
-                        <span className={`text-xs font-mono font-semibold truncate flex-1 ${sel ? 'text-accent' : 'text-text-primary'}`}>
-                          {m.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {llamaModels === null && !loadingModels && (
-                <p className="text-[11px] text-muted/50">
-                  Download GGUF files via <strong className="text-text-primary">Admin → Download Models</strong>.
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Server config hint — points to Admin, never shows raw URL */}
-          {backendConfig.type !== 'webgpu' && (
-            <p className="text-[11px] text-muted/40 border-t border-border/50 pt-2">
-              Server address is configured in{' '}
-              <a href="/admin" className="text-accent hover:underline">Admin → Agent Settings</a>.
-            </p>
-          )}
-
         </div>
       )}
     </div>

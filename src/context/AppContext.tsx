@@ -6,6 +6,7 @@ export const DEFAULT_BACKEND: BackendConfig = { type: 'webgpu', serverUrl: 'http
 
 const initialState: AppState = {
   stage: 'home', stufe1Step: 'idea',
+  mode: (localStorage.getItem('bkg_mode') as 'private' | 'cloud') ?? 'private',
   project: null, editableBundle: null, modifiedFiles: new Set<BundleFileName>(),
   backendConfig: DEFAULT_BACKEND,
   engineStatus: 'idle', engineProgress: { progress: 0, text: '' },
@@ -78,6 +79,7 @@ function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, projectFiles: [], selectedFilePath: null, versions: [], agentMessages: [], milestone: null, codegenRunning: false };
     case 'SET_ERROR':   return { ...state, globalError: action.message };
     case 'CLEAR_ERROR': return { ...state, globalError: null };
+    case 'SET_MODE':    return { ...state, mode: action.mode };
     default: return state;
   }
 }

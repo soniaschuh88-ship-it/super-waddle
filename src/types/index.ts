@@ -7,14 +7,17 @@ export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error'
 /** Inference backend selection.
  *  webgpu     – @mlc-ai/web-llm running in-browser via WebGPU (no server)
  *  ollama     – local `ollama serve` (OpenAI-compatible REST)
- *  llama-cpp  – bundled node-llama-cpp Express server in server/ (GGUF, GPU auto-detect)
+ *  llama-cpp  – bundled node-llama-cpp Express server (GGUF, GPU auto-detect)
+ *  cloud      – free cloud provider via /providers/proxy (Groq, NVIDIA, etc.)
  */
-export type BackendType = 'webgpu' | 'ollama' | 'llama-cpp';
+export type BackendType = 'webgpu' | 'ollama' | 'llama-cpp' | 'cloud';
 
 export interface BackendConfig {
-  type: BackendType;
-  serverUrl: string;
-  modelId: string;
+  type:       BackendType;
+  serverUrl:  string;
+  modelId:    string;
+  /** Cloud mode: "groq/llama-3.3-70b-versatile" format (provider/model) */
+  providerId?: string;
 }
 
 export type FeaturePriority  = 'high' | 'medium' | 'low';
@@ -219,6 +222,8 @@ export interface AppState {
   milestone:       MilestoneState | null;
   codegenRunning:  boolean;
   globalError: string | null;
+  /** Current operating mode */
+  mode: 'private' | 'cloud';
 }
 
 export type AppAction =
@@ -254,4 +259,5 @@ export type AppAction =
   | { type: 'SET_CODEGEN_RUNNING'; running: boolean }
   | { type: 'RESET_CODE_STUDIO' }
   | { type: 'SET_ERROR'; message: string }
-  | { type: 'CLEAR_ERROR' };
+  | { type: 'CLEAR_ERROR' }
+  | { type: 'SET_MODE'; mode: 'private' | 'cloud' };

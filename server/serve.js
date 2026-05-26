@@ -623,9 +623,95 @@ app.get('/providers/:id/models', async (req, res) => {
   const { key } = resolveKeyForUser(req.params.id, keyId ?? '');
   const p = getProvider(req.params.id);
   if (!p) return res.status(404).json({ error: 'Unknown provider' });
-
   const models = await fetchProviderModels(req.params.id, key);
   res.json({ provider: req.params.id, models, count: models.length });
+});
+
+/**
+ * POST /providers/proxy
+ * Cloud-mode inference proxy — routes an OpenAI-compatible request through
+ * the resolved provider API key and streams back the response.
+ *
+ * Body:
+ *   {
+ *     provider: string,         // e.g. "groq"
+ *     model:    string,         // e.g. "llama-3.3-70b-versatile"
+ *     messages: [...]           // OpenAI messages array
+ *     stream?:  boolean,        // default true
+ *     max_tokens?: number,
+ *     temperature?: number,
+ *   }
+ */
+app.post('/providers/proxy', async (req, res) => {
+  const keyId = getCallerKeyId(req);
+  const { provider: providerId, model, messages, stream = true, max_tokens = 4096, temperature = 0.4 } = req.body ?? {};
+
+  if (!providerId || !model || !messages) {
+    return res.status(400).json({ error: 'provider, model, and messages are required' });
+  }
+
+  const p = getProvider(providerId);
+  if (!p) return res.status(404).json({ error: `Unknown provider: ${providerId}` });
+
+  // Resolve API key via fallback chain
+  const { key, source } = resolveKeyForUser(providerId, keyId ?? '');
+
+  if (!key && !p.anonAccess) {
+    return res.status(403).json({
+      error: `No API key for ${p.name}. Configure one in User Settings or Admin → Global Providers.`,
+      provider: providerId,
+      signupUrl: p.signupUrl,
+    });
+  }
+
+  try {
+    const { default: fetch } = await import('node-fetch').catch(() => ({ default: globalThis.fetch }));
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'Accept': stream ? 'text/event-stream' : 'application/json',
+    };
+    if (key && key !== 'anon') headers['Authorization'] = `Bearer ${key}`;
+    // OpenRouter requires HTTP-Referer for some models
+    if (providerId === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://bkg.local';
+      headers['X-Title'] = 'bKG';
+    }
+
+    const upstreamRes = await fetch(`${p.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, messages, stream, max_tokens, temperature }),
+      signal: AbortSignal.timeout(60000),
+    });
+
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text().catch(() => `${upstreamRes.status}`);
+      return res.status(upstreamRes.status).json({ error: text, provider: providerId });
+    }
+
+    if (stream && upstreamRes.body) {
+      // Forward SSE stream
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-bKG-Provider', providerId);
+      res.setHeader('X-bKG-Source', source ?? 'unknown');
+      res.flushHeaders();
+
+      const reader = upstreamRes.body;
+      reader.on('data', chunk => res.write(chunk));
+      reader.on('end', () => res.end());
+      reader.on('error', () => res.end());
+    } else {
+      const data = await upstreamRes.json();
+      res.setHeader('X-bKG-Provider', providerId);
+      res.setHeader('X-bKG-Source', source ?? 'unknown');
+      res.json(data);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!res.headersSent) res.status(502).json({ error: `Proxy error: ${msg}`, provider: providerId });
+  }
 });
 
 // ── /user/* — per-user settings ───────────────────────────────────────────────

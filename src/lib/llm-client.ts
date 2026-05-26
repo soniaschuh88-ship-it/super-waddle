@@ -1,7 +1,10 @@
 /**
  * src/lib/llm-client.ts
- * Unified LLM client — 3 real backends: webgpu | ollama | llama-cpp
- * No mlc-server, no llama-node (both removed as redundant/replaced).
+ * Unified LLM client — supports 4 backends:
+ *   webgpu     – WebGPU in-browser (private mode)
+ *   ollama     – local Ollama (private mode)
+ *   llama-cpp  – local GGUF server (private mode)
+ *   cloud      – free providers via /providers/proxy (cloud mode)
  */
 import type { BackendConfig, EngineProgress } from '@/types';
 import { loadEngine, generateJson as wgJson, generateStreaming as wgStream, isEngineReady } from '@/lib/webllm';
@@ -39,6 +42,75 @@ async function restStream(base: string, model: string, msgs: Msg[], onChunk: (c:
       try {
         const c = JSON.parse(json) as { choices: Array<{ delta: { content?: string } }> };
         const d = c.choices[0]?.delta?.content ?? '';
+        if (d) { full += d; onChunk(d); }
+      } catch { /**/ }
+    }
+  }
+  return full;
+}
+
+// ── Cloud proxy (routes through /providers/proxy on serve.js) ─────────────────
+
+const SERVE_BASE = () => window.location.origin;
+
+/** Parse "providerId/modelId" from a cloud BackendConfig.modelId */
+function parseCloudModel(modelId: string): { providerId: string; model: string } {
+  const slash = modelId.indexOf('/');
+  if (slash < 0) return { providerId: modelId, model: modelId };
+  return { providerId: modelId.slice(0, slash), model: modelId.slice(slash + 1) };
+}
+
+async function cloudComplete(
+  cfg: BackendConfig, msgs: Array<{ role: string; content: string }>,
+  temperature = 0.3, max = 2048,
+): Promise<string> {
+  const { providerId, model } = parseCloudModel(cfg.modelId);
+  const r = await fetch(`${SERVE_BASE()}/providers/proxy`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ provider: providerId, model, messages: msgs, stream: false, temperature, max_tokens: max }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `Cloud provider error ${r.status}`);
+  }
+  const d = await r.json() as { choices: Array<{ message: { content: string } }> };
+  return d.choices?.[0]?.message?.content ?? '';
+}
+
+async function cloudStream(
+  cfg: BackendConfig, msgs: Array<{ role: string; content: string }>,
+  onChunk: (c: string) => void, temperature = 0.4, max = 4096,
+): Promise<string> {
+  const { providerId, model } = parseCloudModel(cfg.modelId);
+  const r = await fetch(`${SERVE_BASE()}/providers/proxy`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ provider: providerId, model, messages: msgs, stream: true, temperature, max_tokens: max }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `Cloud provider error ${r.status}`);
+  }
+  if (!r.body) throw new Error('No response body');
+
+  const reader = r.body.getReader();
+  const dec    = new TextDecoder();
+  let full = '', buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n'); buf = lines.pop() ?? '';
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t.startsWith('data:')) continue;
+      const json = t.slice(5).trim();
+      if (json === '[DONE]') break;
+      try {
+        const c = JSON.parse(json) as { choices: Array<{ delta: { content?: string } }> };
+        const d = c.choices?.[0]?.delta?.content ?? '';
         if (d) { full += d; onChunk(d); }
       } catch { /**/ }
     }
@@ -277,37 +349,51 @@ export async function managerGetSystemdUnits(managerUrl: string): Promise<System
 
 export async function loadClient(config: BackendConfig, onProgress: (p: EngineProgress) => void): Promise<void> {
   if (config.type === 'webgpu') return loadEngine(config.modelId, onProgress);
+  if (config.type === 'cloud') {
+    onProgress({ progress: 50, text: 'Connecting to cloud provider…' });
+    // Verify the proxy is reachable
+    const r = await fetch(`${SERVE_BASE()}/providers/list`, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+    if (!r?.ok) throw new Error('bKG server not reachable. Is serve.js running?');
+    onProgress({ progress: 100, text: 'Cloud ready.' });
+    return;
+  }
   onProgress({ progress: 10, text: `Connecting to ${config.serverUrl}…` });
   const ok = await pingRestBackend(config.serverUrl);
   if (!ok) throw new Error(
-    `Cannot reach ${config.type === 'ollama' ? 'Ollama' : 'node-llama-cpp'} server at ${config.serverUrl}. ` +
-    `Make sure it is running.`
+    `Cannot reach ${config.type === 'ollama' ? 'Ollama' : 'node-llama-cpp'} server. Make sure it is running.`,
   );
   onProgress({ progress: 100, text: 'Server reachable.' });
 }
 
 export function isClientReady(config: BackendConfig): boolean {
-  return config.type === 'webgpu' ? isEngineReady() : config.serverUrl.length > 0;
+  if (config.type === 'webgpu') return isEngineReady();
+  if (config.type === 'cloud') return config.modelId.length > 0;
+  return config.serverUrl.length > 0;
 }
 
 export async function generateJson<T>(system: string, user: string, config: BackendConfig): Promise<T | null> {
+  const msgs = [{ role: 'system', content: system }, { role: 'user', content: user }];
   if (config.type === 'webgpu') return wgJson<T>(system, user);
-  const raw = await restComplete(config.serverUrl, config.modelId,
-    [{ role: 'system', content: system }, { role: 'user', content: user }], 0.2, 2048);
+  if (config.type === 'cloud') {
+    const raw = await cloudComplete(config, msgs, 0.2, 2048);
+    const clean = raw.replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/i,'').trim();
+    try { return JSON.parse(clean) as T; } catch { console.error('[llm-client] cloud parse fail:', raw.slice(0,300)); return null; }
+  }
+  const raw = await restComplete(config.serverUrl, config.modelId, msgs, 0.2, 2048);
   const clean = raw.replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/```\s*$/i,'').trim();
   try { return JSON.parse(clean) as T; } catch { console.error('[llm-client] parse fail:', raw.slice(0,300)); return null; }
 }
 
 export async function generateStreaming(system: string, user: string, onChunk: (c: string) => void, max: number, config: BackendConfig): Promise<string> {
+  const msgs = [{ role: 'system', content: system }, { role: 'user', content: user }];
   if (config.type === 'webgpu') return wgStream(system, user, onChunk, max);
-  return restStream(config.serverUrl, config.modelId,
-    [{ role: 'system', content: system }, { role: 'user', content: user }], onChunk, 0.4, max);
+  if (config.type === 'cloud') return cloudStream(config, msgs, onChunk, 0.4, max);
+  return restStream(config.serverUrl, config.modelId, msgs, onChunk, 0.4, max);
 }
 
 // ── bKG Coding Agent API (talks to serve.js /agent/* + /plugins/* + /settings) ──
 
-/** Base URL for the bKG serve.js unified server. Defaults to same origin. */
-const SERVE_BASE = () => window.location.origin;
+// SERVE_BASE is defined above (cloud proxy section)
 
 import type {
   AgentSession, AgentEvent, AgentSettings,
