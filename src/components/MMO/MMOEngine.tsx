@@ -23,7 +23,7 @@ import {
   Globe, Users, Shield, Bot,
   Link2, FlaskConical, RefreshCw,
   Wifi, WifiOff, Zap, Activity,
-  Play, Pause,
+  Play, Pause, AlertTriangle, Sliders,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ interface DeltaEvent {
   mat?: number; src?: string; ts: number;
 }
 
-type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm';
+type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm' | 'stable';
 
 const ROLE_COLOR: Record<string, string> = {
   sim:    '#00e5ff',
@@ -245,6 +245,13 @@ export function MMOEngine() {
   const [peers,      setPeers]      = useState<PeerInfo[]>([]);
   const [proofBlocks,setProofBlocks]= useState<ProofBlock[]>([]);
   const [farmTasks,  setFarmTasks]  = useState<FarmTask[]>([]);
+  const [kernelData, setKernelData] = useState<{
+    rebalancer?: { splits: number; merges: number; totalMigrations: number; loadMap: Record<string, { peerCount: number; load: number }> };
+    interest?:   { eventsClassified: number; eventsFiltered: number; filterEfficiency: string };
+    forks?:      { forksDetected: number; forksResolved: number; activeForks: number; avgResolutionMs: number };
+    bandwidth?:  { totalSent: number; totalDropped: number; mbpsSent: number };
+    tick?:       { zones: number; avgDrift: number; corrections: number; fullResyncs: number };
+  }>({});
   const [npcs,       setNPCs]       = useState<NPC[]>([]);
   const [deltaLog,   setDeltaLog]   = useState<DeltaEvent[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -299,6 +306,25 @@ export function MMOEngine() {
     } catch { /**/ }
   };
 
+  const loadKernel = async () => {
+    try {
+      const [reb, interest, forks, bw, tick] = await Promise.all([
+        api.get<Record<string, unknown>>('/mmo/stabilize/rebalancer').catch(() => null),
+        api.get<Record<string, unknown>>('/mmo/stabilize/interest').catch(() => null),
+        api.get<Record<string, unknown>>('/mmo/stabilize/forks').catch(() => null),
+        api.get<Record<string, unknown>>('/mmo/stabilize/bandwidth').catch(() => null),
+        api.get<Record<string, unknown>>('/mmo/stabilize/tick').catch(() => null),
+      ]);
+      setKernelData({
+        rebalancer: reb as typeof kernelData.rebalancer,
+        interest:   interest as typeof kernelData.interest,
+        forks:      forks as typeof kernelData.forks,
+        bandwidth:  bw as typeof kernelData.bandwidth,
+        tick:       tick as typeof kernelData.tick,
+      });
+    } catch { /**/ }
+  };
+
   useEffect(() => {
     void refresh();
     const iv = setInterval(refresh, 3000);
@@ -306,9 +332,10 @@ export function MMOEngine() {
   }, [refresh]);
 
   useEffect(() => {
-    if (panel === 'proof') void loadProof();
-    if (panel === 'farm')  void loadFarm();
-    if (panel === 'npcs')  void loadNPCs();
+    if (panel === 'proof')  void loadProof();
+    if (panel === 'farm')   void loadFarm();
+    if (panel === 'npcs')   void loadNPCs();
+    if (panel === 'stable') void loadKernel();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panel]);
 
@@ -359,6 +386,7 @@ export function MMOEngine() {
     { id: 'npcs',      label: 'NPCs',     Icon: Bot        },
     { id: 'proof',     label: 'Proof',    Icon: Link2      },
     { id: 'farm',      label: 'Farm',     Icon: FlaskConical},
+    { id: 'stable',    label: 'Kernel',   Icon: Sliders     },
   ];
 
   const ACCENT = '#00e5ff';
@@ -800,6 +828,137 @@ result: identical canonical state on all peers`}</pre>
                 →  LOD baking for far chunks
 Result: real "shared MMO brain"
         world simulates itself via peer grid`}</pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Stabilization Kernel panel ── */}
+        {panel === 'stable' && (
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex flex-col gap-5 max-w-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-text-primary" style={{ fontFamily:"'Orbitron',sans-serif" }}>
+                    MMO Stabilization Kernel
+                  </h2>
+                  <p className="text-xs text-muted/50 mt-1">
+                    Cluster rebalancing · Interest filtering · Fork resolution · Bandwidth shaping · Tick sync
+                  </p>
+                </div>
+                <button onClick={() => void loadKernel()} className="text-muted/40 hover:text-accent transition-colors">
+                  <RefreshCw size={13}/>
+                </button>
+              </div>
+
+              {/* Cluster rebalancer */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-4">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Sliders size={10} className="text-accent/70"/>Cluster Rebalancer
+                </p>
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  <StatItem label="Splits"      value={kernelData.rebalancer?.splits ?? 0}/>
+                  <StatItem label="Merges"       value={kernelData.rebalancer?.merges ?? 0}/>
+                  <StatItem label="Migrations"   value={kernelData.rebalancer?.totalMigrations ?? 0}/>
+                </div>
+                {Object.keys(kernelData.rebalancer?.loadMap ?? {}).length > 0 && (
+                  <div className="flex flex-col gap-1 mt-2">
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-muted/40">Zone Load Map</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(kernelData.rebalancer?.loadMap ?? {}).map(([zone, data]) => {
+                        const load = data.load;
+                        const color = load > 0.8 ? '#ff4444' : load > 0.5 ? '#ffb300' : '#00e5a0';
+                        return (
+                          <span key={zone} className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
+                            style={{ borderColor: color + '50', color, background: color + '10' }}>
+                            {zone} {(load * 100).toFixed(0)}%
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Interest manager */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-4">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Activity size={10} className="text-accent/70"/>Interest Filtering
+                  <span className="ml-auto text-success/70 text-[10px]">
+                    {kernelData.interest?.filterEfficiency ?? '0%'} filtered
+                  </span>
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <StatItem label="Classified"  value={kernelData.interest?.eventsClassified ?? 0}/>
+                  <StatItem label="Filtered"     value={kernelData.interest?.eventsFiltered ?? 0} color="#00e5a0"/>
+                  <StatItem label="Efficiency"   value={kernelData.interest?.filterEfficiency ?? '0%'} color="#00e5a0"/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-2">
+                  CRITICAL=zone-wide · COMBAT=512 · PHYSICS=256 · TERRAIN=192 · NPC=128 · AMBIENT=64
+                </p>
+              </div>
+
+              {/* Fork resolver */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-4">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <AlertTriangle size={10} className="text-amber/70"/>Fork Resolver
+                  {(kernelData.forks?.activeForks ?? 0) > 0 && (
+                    <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-full bg-error/15 text-error animate-pulse">
+                      {kernelData.forks?.activeForks} ACTIVE
+                    </span>
+                  )}
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <StatItem label="Detected"     value={kernelData.forks?.forksDetected ?? 0}/>
+                  <StatItem label="Resolved"      value={kernelData.forks?.forksResolved ?? 0} color="#00e5a0"/>
+                  <StatItem label="Active forks"  value={kernelData.forks?.activeForks ?? 0} color={(kernelData.forks?.activeForks ?? 0) > 0 ? '#ff4444' : undefined}/>
+                  <StatItem label="Avg resolve"   value={`${kernelData.forks?.avgResolutionMs ?? 0}ms`}/>
+                </div>
+              </div>
+
+              {/* Bandwidth shaper */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-4">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Wifi size={10} className="text-accent/70"/>Bandwidth Shaper
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <StatItem label="Sent"         value={kernelData.bandwidth?.totalSent ?? 0}/>
+                  <StatItem label="Dropped"       value={kernelData.bandwidth?.totalDropped ?? 0} color={(kernelData.bandwidth?.totalDropped ?? 0) > 0 ? '#ffb300' : undefined}/>
+                  <StatItem label="Mbps"          value={`${kernelData.bandwidth?.mbpsSent ?? 0}`} color="#00e5ff"/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-2">
+                  Priority: CRITICAL → COMBAT → PHYSICS → TERRAIN → NPC → AMBIENT → BACKGROUND
+                </p>
+              </div>
+
+              {/* Tick sync */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-4">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Zap size={10} className="text-accent/70"/>Tick Synchronisation
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <StatItem label="Zones"         value={kernelData.tick?.zones ?? 0}/>
+                  <StatItem label="Avg drift"      value={`${kernelData.tick?.avgDrift ?? 0} ticks`} color={(kernelData.tick?.avgDrift ?? 0) > 5 ? '#ffb300' : '#00e5a0'}/>
+                  <StatItem label="Corrections"    value={kernelData.tick?.corrections ?? 0}/>
+                  <StatItem label="Full resyncs"   value={kernelData.tick?.fullResyncs ?? 0} color={(kernelData.tick?.fullResyncs ?? 0) > 0 ? '#ff4444' : undefined}/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-2">
+                  GOOD &lt;5 · FAIR 5-15 · POOR 15-50 · DRIFTED &gt;50 ticks | damping: 50%/20%
+                </p>
+              </div>
+
+              {/* Architecture summary */}
+              <div className="rounded-xl border border-border/30 bg-panel/30 p-4 font-mono text-[10px] text-muted/50 leading-relaxed">
+                <p className="text-accent/70 font-bold mb-2">Stabilization Kernel — Production Layer</p>
+                <pre>{`Load score   = peerCount×0.5 + simLag×0.35 + events×0.15
+Split        → when load > 100% for > 60 ticks (3s hysteresis)
+Merge        → when load < 4% for > 60 ticks
+Interest     → COMBAT 512vox, TERRAIN 192vox, AMBIENT 64vox
+Fork         → detect on stateHash divergence ±5 ticks
+              → resolve via deterministic reduce() on all branches
+Bandwidth    → 7 priority queues, 50ms drain cycle, RLE compress
+Tick sync    → NTP-inspired: median(adjusted_ticks) → canonical
+              → corrections damped at 50% (fast) / 20% (slow)`}</pre>
               </div>
             </div>
           </div>

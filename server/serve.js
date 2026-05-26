@@ -142,6 +142,12 @@ import {
   npcShouldExist, npcPosition,
 } from './cluster-manager.js';
 
+import { ClusterRebalancer }    from './cluster-rebalancer.js';
+import { interestManager, PRIORITY, PRIORITY_NAME, classifyEvent } from './interest-manager.js';
+import { conflictResolver }     from './vsl-conflict-resolver.js';
+import { bandwidthShaper, DeltaCompressor } from './bandwidth-shaper.js';
+import { getTickSync, listTickSyncs, globalTickSyncStats } from './tick-sync.js';
+
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
 
@@ -1714,6 +1720,117 @@ app.get('/mmo/ws-info', (_req, res) => {
   });
 });
 
+// ── /mmo/stabilization/* — MMO Stabilization Kernel ─────────────────────────
+
+/** GET /mmo/stabilize/rebalancer — load map + rebalancer metrics */
+app.get('/mmo/stabilize/rebalancer', (_req, res) => {
+  res.json({ ...rebalancer.getMetrics(), loadMap: rebalancer.getLoadMap() });
+});
+
+/** GET /mmo/stabilize/interest — per-peer subscription stats */
+app.get('/mmo/stabilize/interest', (_req, res) => {
+  res.json({ ...interestManager.getStats(), peerStats: interestManager.getPeerStats(20), snapshot: interestManager.interestSnapshot() });
+});
+
+/** POST /mmo/stabilize/interest/subscribe — subscribe a peer */
+app.post('/mmo/stabilize/interest/subscribe', (req, res) => {
+  const { peerId, wx=0, wy=0, wz=0, yaw } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  const zoneId = interestManager.subscribe(peerId, +wx, +wy, +wz, yaw !== undefined ? +yaw : undefined);
+  res.json({ ok: true, zoneId, zones: interestManager.getPeerZones(peerId).length });
+});
+
+/**
+ * POST /mmo/stabilize/interest/route — classify event + get interested peers
+ * Body: { event, zoneId, originId? }
+ */
+app.post('/mmo/stabilize/interest/route', (req, res) => {
+  const { event, zoneId = '0:0:0', originId = '' } = req.body ?? {};
+  if (!event) return res.status(400).json({ error: 'event required' });
+  const priority = classifyEvent(event);
+  const peers    = interestManager.getInterestedPeers(event, zoneId, originId);
+  res.json({ priority, priorityName: PRIORITY_NAME[priority], peers, peerCount: peers.length });
+});
+
+/** GET /mmo/stabilize/forks — active + recent resolved forks */
+app.get('/mmo/stabilize/forks', (_req, res) => {
+  res.json({
+    ...conflictResolver.getStats(),
+    active:   conflictResolver.getActiveForks(),
+    resolved: conflictResolver.getRecentResolutions(10),
+  });
+});
+
+/**
+ * POST /mmo/stabilize/forks/report — peer reports its stateHash (fork detection)
+ * Body: { zoneId, peerId, stateHash, atTick }
+ */
+app.post('/mmo/stabilize/forks/report', (req, res) => {
+  const { zoneId, peerId, stateHash, atTick } = req.body ?? {};
+  if (!zoneId || !peerId || !stateHash || atTick === undefined)
+    return res.status(400).json({ error: 'zoneId, peerId, stateHash, atTick required' });
+
+  const fork = conflictResolver.reportState(zoneId, peerId, stateHash, +atTick);
+  res.json({ fork: fork ? { id: fork.id, forkTick: fork.forkTick, branches: fork.branches.size } : null });
+});
+
+/**
+ * POST /mmo/stabilize/forks/submit — submit events for fork resolution
+ * Body: { forkId, peerId, events, stateHash, atTick, zonePeers? }
+ */
+app.post('/mmo/stabilize/forks/submit', (req, res) => {
+  const { forkId, peerId, events = [], stateHash, atTick, zonePeers = [] } = req.body ?? {};
+  if (!forkId || !peerId) return res.status(400).json({ error: 'forkId + peerId required' });
+
+  const result = conflictResolver.submitBranch(forkId, peerId, events, stateHash ?? '', +atTick, zonePeers);
+  if (result) {
+    // Apply canonical state back to ledger
+    for (const cluster of defaultMgr.clusters.values()) {
+      conflictResolver.applyToLedger(cluster.ledger, result.voxelMap, result.stateHash);
+    }
+  }
+  res.json(result ? { resolved: true, stateHash: result.stateHash, appliedCount: result.appliedCount } : { resolved: false });
+});
+
+/** GET /mmo/stabilize/bandwidth — shaper stats */
+app.get('/mmo/stabilize/bandwidth', (_req, res) => {
+  res.json({ ...bandwidthShaper.getStats(), queueDepths: bandwidthShaper.getQueueDepths() });
+});
+
+/**
+ * POST /mmo/stabilize/bandwidth/tier — set bandwidth tier for a peer
+ * Body: { peerId, tier: 'full'|'normal'|'throttled'|'minimal' }
+ */
+app.post('/mmo/stabilize/bandwidth/tier', (req, res) => {
+  const { peerId, tier } = req.body ?? {};
+  if (!peerId || !tier) return res.status(400).json({ error: 'peerId + tier required' });
+  bandwidthShaper.setTier(peerId, tier);
+  res.json({ ok: true, peerId, tier });
+});
+
+/** GET /mmo/stabilize/tick — tick sync status for all zones */
+app.get('/mmo/stabilize/tick', (_req, res) => {
+  res.json({ ...globalTickSyncStats(), zones: listTickSyncs() });
+});
+
+/**
+ * POST /mmo/stabilize/tick/report — peer reports its local tick
+ * Body: { zoneId, peerId, localTick, sentAt, latencyMs? }
+ */
+app.post('/mmo/stabilize/tick/report', (req, res) => {
+  const { zoneId='0:0:0', peerId, localTick, sentAt, latencyMs=100 } = req.body ?? {};
+  if (!peerId || localTick === undefined) return res.status(400).json({ error: 'peerId + localTick required' });
+
+  const ts     = getTickSync(zoneId);
+  const result = ts.report(peerId, +localTick, +(sentAt ?? Date.now()), +latencyMs);
+  res.json({ ...result, zoneId, canonical: ts.globalTick });
+});
+
+/** GET /mmo/stabilize/tick/:zoneId — tick sync state for one zone */
+app.get('/mmo/stabilize/tick/:zoneId', (req, res) => {
+  res.json(getTickSync(req.params.zoneId).snapshot());
+});
+
 // ── /vldb/* — VLDB Voxel Layer Database ──────────────────────────────────────
 //
 // Compressed space-event machine.
@@ -2335,8 +2452,20 @@ try {
 const httpServer = createServer(app);
 
 // ── Attach MMO WebSocket + start cluster manager ───────────────────────────
-const mmoWss = attachMMOWebSocket(httpServer, peerRegistry, npcConsensus, proofChain);
-const defaultMgr = getClusterManager('default');
+const mmoWss        = attachMMOWebSocket(httpServer, peerRegistry, npcConsensus, proofChain);
+const defaultMgr    = getClusterManager('default');
+const rebalancer    = new ClusterRebalancer(defaultMgr).start();
+
+// Start bandwidth shaper — delivers queued messages via WebSocket
+bandwidthShaper.start((peerId, messages) => {
+  const peer = peerRegistry.getPeer(peerId);
+  const ws   = peer?.ws;
+  if (ws?.readyState === 1) {
+    for (const msg of messages) {
+      try { ws.send(JSON.stringify(msg)); } catch { /**/ }
+    }
+  }
+});
 
 httpServer.listen(PORT, HOST, () => {
   _ready = true;
