@@ -9,9 +9,9 @@
  *   • themes      — Visual theme definitions
  *
  * Install sources:
- *   npm:@scope/package          → ~/.icadp/plugins/npm/@scope/package/
+ *   npm:@scope/package          → ~/.bkg/plugins/npm/@scope/package/
  *   npm:@scope/package@1.2.3   → pinned version
- *   git:github.com/user/repo   → ~/.icadp/plugins/git/user__repo/
+ *   git:github.com/user/repo   → ~/.bkg/plugins/git/user__repo/
  *   git:github.com/user/repo@v1 → pinned tag/commit
  *   https://github.com/user/repo
  *
@@ -30,7 +30,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 
 const __dir      = dirname(fileURLToPath(import.meta.url));
-const ICADP_DIR  = join(homedir(), '.icadp');
+const ICADP_DIR  = join(homedir(), '.bkg');
 const NPM_DIR    = join(ICADP_DIR, 'plugins', 'npm');
 const GIT_DIR    = join(ICADP_DIR, 'plugins', 'git');
 const INDEX_FILE = join(ICADP_DIR, 'plugins', 'index.json');

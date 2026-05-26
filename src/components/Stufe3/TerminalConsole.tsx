@@ -20,7 +20,7 @@ export function TerminalConsole({ logs, isRunning }: { logs:SimulationLogEntry[]
         <div className="flex gap-1.5">
           <span className="w-3 h-3 rounded-full bg-error/60"/><span className="w-3 h-3 rounded-full bg-warning/60"/><span className="w-3 h-3 rounded-full bg-success/60"/>
         </div>
-        <span className="flex-1 text-center text-[11px] font-mono text-muted/60">icadp-executor — zsh</span>
+        <span className="flex-1 text-center text-[11px] font-mono text-muted/60">bkg-executor — zsh</span>
         <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${isRunning?'text-accent bg-accent/10 animate-pulse-slow':'text-muted bg-border/50'}`}>
           {isRunning?'● RUN':'● IDLE'}
         </span>

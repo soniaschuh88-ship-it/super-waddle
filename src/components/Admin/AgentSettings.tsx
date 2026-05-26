@@ -1,6 +1,6 @@
 /**
  * src/components/Admin/AgentSettings.tsx
- * Configure the ICADP coding agent (pi-agent-core settings).
+ * Configure the bKG coding agent (pi-agent-core settings).
  */
 import { useState, useEffect, useCallback } from 'react';
 import { Save, RefreshCw, Bot, Terminal, Cpu, Server } from 'lucide-react';
@@ -79,10 +79,10 @@ export function AgentSettings() {
       <div className="rounded-xl border border-border bg-panel p-4 flex items-start gap-3">
         <Bot size={18} className="text-accent flex-shrink-0 mt-0.5"/>
         <div>
-          <p className="text-sm font-semibold text-text-primary">ICADP Coding Agent</p>
+          <p className="text-sm font-semibold text-text-primary">bKG Coding Agent</p>
           <p className="text-xs text-muted mt-0.5 leading-relaxed">
             Powered by <code className="font-mono bg-border/60 px-1 rounded text-[11px]">@earendil-works/pi-agent-core</code>.
-            Settings are stored at <code className="font-mono bg-border/60 px-1 rounded text-[11px]">~/.icadp/settings.json</code>.
+            Settings are stored at <code className="font-mono bg-border/60 px-1 rounded text-[11px]">~/.bkg/settings.json</code>.
           </p>
         </div>
       </div>

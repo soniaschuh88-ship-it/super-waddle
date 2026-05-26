@@ -3,8 +3,8 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download, Bot, Puzzle } from 'lucide-react';
-import { AdminAuth, checkPassword } from './AdminAuth';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download, Bot, Puzzle, Key } from 'lucide-react';
+import { AdminAuth, logout, verifyStoredToken, getToken } from './AdminAuth';
 import { OllamaManager }       from './OllamaManager';
 import { NodeLlamaCppManager } from './NodeLlamaCppManager';
 import { ServerManager }       from './ServerManager';
@@ -15,14 +15,14 @@ import { EmbeddingsLab }       from './EmbeddingsLab';
 import { ModelDownloadPanel }  from './ModelDownloadPanel';
 import { AgentSettings }       from './AgentSettings';
 import { PluginManager }       from './PluginManager';
+import { ApiKeys }             from './ApiKeys';
 import { useAppState }         from '@/context/AppContext';
 
-const SESSION_KEY = 'icadp_admin_unlocked';
-
-type Tab = 'agent' | 'plugins' | 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+type Tab = 'agent' | 'apikeys' | 'plugins' | 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
   { id:'agent',      label:'Agent Settings',    icon:Bot          },
+  { id:'apikeys',    label:'API Keys',           icon:Key          },
   { id:'plugins',    label:'Plugins',           icon:Puzzle       },
   { id:'servers',    label:'Server Manager',    icon:Power        },
   { id:'models',     label:'Download Models',   icon:Download     },
@@ -36,16 +36,18 @@ const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:st
 
 export function AdminApp() {
   const { state } = useAppState();
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
+  const [unlocked, setUnlocked] = useState(() => !!getToken());
   const [tab, setTab]           = useState<Tab>('servers');
 
+  // Verify token with server on mount
   useEffect(() => {
-    if (unlocked) sessionStorage.setItem(SESSION_KEY, '1');
-    else sessionStorage.removeItem(SESSION_KEY);
-  }, [unlocked]);
+    if (getToken()) {
+      verifyStoredToken().then(valid => { if (!valid) setUnlocked(false); });
+    }
+  }, []);
 
   const handleUnlock = () => setUnlocked(true);
-  const handleLock   = () => { setUnlocked(false); checkPassword('').catch(()=>{}); };
+  const handleLock   = () => { logout(); setUnlocked(false); };
 
   if (!unlocked) return <AdminAuth onUnlock={handleUnlock}/>;
 
@@ -60,7 +62,7 @@ export function AdminApp() {
             <Cpu size={18} className="text-accent"/>
           </div>
           <div>
-            <span className="text-sm font-semibold text-text-primary tracking-tight">ICADP Admin</span>
+            <span className="text-sm font-semibold text-text-primary tracking-tight">bKG Admin</span>
             <span className="ml-2 text-[10px] text-accent font-mono tracking-widest">v3.0</span>
           </div>
         </div>
@@ -99,6 +101,7 @@ export function AdminApp() {
               <h2 className="text-lg font-semibold text-text-primary">{ActiveTab.label}</h2>
             </div>
             {tab === 'agent'      && <AgentSettings/>}
+            {tab === 'apikeys'    && <ApiKeys/>}
             {tab === 'plugins'    && <PluginManager/>}
             {tab === 'servers'    && <ServerManager/>}
             {tab === 'models'     && (

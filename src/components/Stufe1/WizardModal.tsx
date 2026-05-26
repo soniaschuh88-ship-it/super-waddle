@@ -103,7 +103,7 @@ export function WizardModal() {
         <div className="rounded-xl border border-border bg-surface shadow-2xl overflow-hidden">
           <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-panel">
             <div className="flex items-center justify-center w-7 h-7 rounded-md bg-accent/15 border border-accent/30"><Layers size={15} className="text-accent"/></div>
-            <div><h1 className="text-sm font-semibold text-text-primary tracking-tight">ICADP Factory Plan Generator</h1><p className="text-[11px] text-muted">{STEP_LABELS[step]}</p></div>
+            <div><h1 className="text-sm font-semibold text-text-primary tracking-tight">bKG Plan Generator</h1><p className="text-[11px] text-muted">{STEP_LABELS[step]}</p></div>
             <div className="ml-auto flex items-center gap-1.5">
               {(['idea','features','generating'] as const).map(s=><div key={s} className={['w-2 h-2 rounded-full transition-colors',s===step?'bg-accent':'bg-border'].join(' ')}/>)}
             </div>

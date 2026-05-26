@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, Trash2, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 import { ollamaListModels, ollamaPullModel, ollamaDeleteModel, OLLAMA_POPULAR_MODELS, type OllamaModel } from '@/lib/llm-client';
 
-const DEFAULT_URL = localStorage.getItem('icadp_ollama_url') ?? 'http://localhost:11434';
+const DEFAULT_URL = localStorage.getItem('bkg_ollama_url') ?? 'http://localhost:11434';
 
 function fmtBytes(b: number): string {
   if (b<1073741824) return `${(b/1048576).toFixed(1)} MB`;
@@ -60,7 +60,7 @@ export function OllamaManager() {
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <label className="text-[11px] font-semibold text-muted uppercase tracking-wider block mb-1">Ollama Server URL</label>
-          <input type="url" value={url} onChange={e=>{ setUrl(e.target.value); localStorage.setItem('icadp_ollama_url',e.target.value); }}
+          <input type="url" value={url} onChange={e=>{ setUrl(e.target.value); localStorage.setItem('bkg_ollama_url',e.target.value); }}
             className="w-full bg-base border border-border text-text-primary text-sm font-mono rounded-lg px-3 py-2 focus:outline-none focus:border-accent/60"/>
         </div>
         <button onClick={refresh} disabled={loading} className="mt-5 flex items-center gap-1.5 px-3 py-2 text-sm border border-border text-muted hover:text-accent hover:border-accent/40 rounded-lg transition-colors">

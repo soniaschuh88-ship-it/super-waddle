@@ -304,9 +304,9 @@ export async function generateStreaming(system: string, user: string, onChunk: (
     [{ role: 'system', content: system }, { role: 'user', content: user }], onChunk, 0.4, max);
 }
 
-// ── ICADP Coding Agent API (talks to serve.js /agent/* + /plugins/* + /settings) ──
+// ── bKG Coding Agent API (talks to serve.js /agent/* + /plugins/* + /settings) ──
 
-/** Base URL for the ICADP serve.js unified server. Defaults to same origin. */
+/** Base URL for the bKG serve.js unified server. Defaults to same origin. */
 const SERVE_BASE = () => window.location.origin;
 
 import type {

@@ -1,5 +1,5 @@
 /**
- * server/serve.js — ICADP 3.0 Unified Server
+ * server/serve.js — bKG Unified Server
  *
  * Single process that:
  *   1. Serves the built React app from ../dist/  (SPA with HTML fallback)
@@ -25,7 +25,27 @@ import { createServer } from 'http';
 import { spawn }        from 'child_process';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync, readFileSync } from 'fs';
+import { createHmac, randomBytes }   from 'crypto';
+
+// ── Load .env from project root ────────────────────────────────────────────────
+// Try to load a .env file two levels up from server/ (project root)
+const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ENV_FILE     = join(PROJECT_ROOT, '.env');
+
+if (existsSync(ENV_FILE)) {
+  const lines = readFileSync(ENV_FILE, 'utf-8').split('\n');
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eqIdx = line.indexOf('=');
+    if (eqIdx < 0) continue;
+    const key   = line.slice(0, eqIdx).trim();
+    const value = line.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, '');
+    if (key && !(key in process.env)) process.env[key] = value;
+  }
+  console.log(`[bKG] Loaded .env from ${ENV_FILE}`);
+}
 
 import {
   startSession, sendMessage, abortSession,
@@ -41,13 +61,26 @@ import {
   searchNpm,
 } from './plugins.js';
 
+import {
+  createApiKey, listApiKeys, revokeApiKey,
+  setKeyEnabled, validateApiKey, SCOPES,
+} from './api-keys.js';
+
+import {
+  startSandboxAgent, stopSandboxAgent,
+  getSandboxAgentStatus, getSandboxAgentLogs,
+  proxyToSandboxAgent,
+} from './sandbox.js';
+
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
 
-const PORT        = parseInt(process.env.PORT        ?? '3000',  10);
-const HOST        = process.env.HOST                  ?? '0.0.0.0';
-const LLAMA_PORT  = parseInt(process.env.LLAMA_PORT  ?? '8001',  10);
-const OLLAMA_PORT = parseInt(process.env.OLLAMA_PORT ?? '11434', 10);
+const PORT        = parseInt(process.env.BKG_PORT    ?? process.env.PORT        ?? '4001', 10);
+const HOST        = process.env.BKG_HOST              ?? process.env.HOST        ?? '0.0.0.0';
+const LLAMA_PORT  = parseInt(process.env.BKG_LLAMA_PORT ?? process.env.LLAMA_PORT ?? '8001',  10);
+const OLLAMA_PORT = parseInt(process.env.BKG_OLLAMA_PORT ?? process.env.OLLAMA_PORT ?? '11434', 10);
+const JWT_SECRET  = process.env.BKG_JWT_SECRET        ?? randomBytes(32).toString('hex');
+const ADMIN_HASH  = process.env.BKG_ADMIN_PASSWORD_HASH ?? '';
 
 // ── Model server process management ──────────────────────────────────────────
 
@@ -117,6 +150,172 @@ app.use(express.json({ limit: '8mb' }));
 
 // ── /api/* — model server manager ────────────────────────────────────────────
 
+// ── /auth/* — admin authentication (bcrypt + HMAC token) ─────────────────────
+
+/**
+ * Simple stateless tokens: HMAC-SHA256(secret, "admin:"+timestamp).
+ * Not a full JWT but sufficient for a single-user local tool.
+ */
+function makeToken() {
+  const ts  = Math.floor(Date.now() / 1000);
+  const mac = createHmac('sha256', JWT_SECRET).update(`admin:${ts}`).digest('hex');
+  return Buffer.from(JSON.stringify({ ts, mac })).toString('base64url');
+}
+
+function verifyToken(token) {
+  try {
+    const { ts, mac } = JSON.parse(Buffer.from(token, 'base64url').toString());
+    const expected    = createHmac('sha256', JWT_SECRET).update(`admin:${ts}`).digest('hex');
+    const age         = Math.floor(Date.now() / 1000) - ts;
+    return mac === expected && age < 86400 * 7; // valid 7 days
+  } catch { return false; }
+}
+
+/**
+ * POST /auth/login  — body: { password: string }
+ * Returns { token } on success, 401 on failure.
+ */
+app.post('/auth/login', async (req, res) => {
+  const { password } = req.body ?? {};
+  if (!password) return res.status(400).json({ error: 'password required' });
+
+  // If no hash configured, fall back to the default password comparison
+  const fallback = 'bkg_admin_2024';
+
+  let ok = false;
+  if (ADMIN_HASH) {
+    try {
+      const bcrypt = await import('bcryptjs');
+      ok = await bcrypt.default.compare(password, ADMIN_HASH);
+    } catch { ok = password === fallback; }
+  } else {
+    ok = password === fallback;
+  }
+
+  if (!ok) return res.status(401).json({ error: 'Invalid password' });
+  res.json({ token: makeToken(), expiresIn: 604800 });
+});
+
+/** GET /auth/verify  — verify a token */
+app.get('/auth/verify', (req, res) => {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (verifyToken(token)) res.json({ valid: true });
+  else res.status(401).json({ valid: false, error: 'Invalid or expired token' });
+});
+
+/**
+ * Utility to hash a new admin password (called by the setup helper).
+ * POST /auth/hash  — body: { password }  — returns { hash }
+ * Only available when no ADMIN_HASH is set (first-run setup).
+ */
+app.post('/auth/hash', async (req, res) => {
+  if (ADMIN_HASH) return res.status(403).json({ error: 'Admin password is already set' });
+  const { password } = req.body ?? {};
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password must be ≥ 6 chars' });
+  const bcrypt = await import('bcryptjs');
+  const hash   = await bcrypt.default.hash(password, 12);
+  res.json({ hash, hint: `Add to .env: BKG_ADMIN_PASSWORD_HASH=${hash}` });
+});
+
+// ── /api-keys/* — API key management ─────────────────────────────────────────
+
+/** Extract a Bearer token from a request (header or ?apiKey query param). */
+function extractBearerToken(req) {
+  const auth = req.headers.authorization ?? '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7).trim();
+  return (req.query.apiKey ?? '').toString().trim() || null;
+}
+
+/**
+ * Middleware: require a valid API key with at least one of the given scopes.
+ * Passes through if the request carries a valid admin JWT token too.
+ */
+export function requireApiKey(...scopes) {
+  return (req, res, next) => {
+    // Allow valid admin JWT session tokens as well
+    const auth  = req.headers.authorization ?? '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+    if (token && verifyToken(token)) return next();  // admin session
+
+    // Check API key
+    const rawKey = extractBearerToken(req);
+    if (!rawKey) return res.status(401).json({ error: 'Authentication required (Bearer token or API key)' });
+
+    const k = validateApiKey(rawKey);
+    if (!k) return res.status(401).json({ error: 'Invalid or revoked API key' });
+
+    // Check scope
+    if (k.scope !== 'admin' && scopes.length > 0 && !scopes.includes(k.scope)) {
+      return res.status(403).json({ error: `Scope '${k.scope}' not permitted here; required: ${scopes.join(' | ')}` });
+    }
+
+    req.apiKey = k;  // attach to request for downstream use
+    next();
+  };
+}
+
+/** GET /api-keys — list all keys (admin JWT required) */
+app.get('/api-keys', (req, res) => {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (!token || !verifyToken(token)) return res.status(401).json({ error: 'Admin session required' });
+  res.json(listApiKeys());
+});
+
+/** POST /api-keys — create a key (admin JWT required) */
+app.post('/api-keys', (req, res) => {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (!token || !verifyToken(token)) return res.status(401).json({ error: 'Admin session required' });
+
+  const { name, scope } = req.body ?? {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  if (scope && !SCOPES.includes(scope)) return res.status(400).json({ error: `scope must be one of: ${SCOPES.join(', ')}` });
+
+  const { key, stored } = createApiKey(name, scope ?? 'inference');
+  // Return the raw key ONCE — never stored in plaintext after this
+  res.status(201).json({ ...stored, key, warning: 'Store this key securely. It will not be shown again.' });
+});
+
+/** DELETE /api-keys/:id — revoke a key (admin JWT required) */
+app.delete('/api-keys/:id', (req, res) => {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (!token || !verifyToken(token)) return res.status(401).json({ error: 'Admin session required' });
+
+  const ok = revokeApiKey(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Key not found' });
+  res.json({ ok: true });
+});
+
+/** PUT /api-keys/:id/enabled — enable/disable a key */
+app.put('/api-keys/:id/enabled', (req, res) => {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (!token || !verifyToken(token)) return res.status(401).json({ error: 'Admin session required' });
+
+  const { enabled } = req.body ?? {};
+  const ok = setKeyEnabled(req.params.id, !!enabled);
+  if (!ok) return res.status(404).json({ error: 'Key not found' });
+  res.json({ ok: true });
+});
+
+/** GET /api-keys/scopes — list valid scopes */
+app.get('/api-keys/scopes', (_req, res) => {
+  res.json({
+    scopes: SCOPES.map(s => ({
+      id: s,
+      description: {
+        inference: 'Access /v1/* model inference endpoints',
+        agent:     'Access /agent/* coding agent endpoints',
+        admin:     'Full access to all routes',
+        readonly:  'GET-only: status, sessions, model list',
+      }[s] ?? s,
+    })),
+  });
+});
+
 app.get('/api/status', async (_req, res) => {
   const [llama, ollama] = await Promise.all([serverStatus('llama'), serverStatus('ollama')]);
   res.json({ llama, ollama });
@@ -144,9 +343,9 @@ app.get('/api/systemd-units', (_req, res) => {
   const dir  = __dir;
   res.json({
     llama: {
-      unitFile: `/etc/systemd/system/icadp-llama.service`,
-      content: `[Unit]\nDescription=ICADP node-llama-cpp inference server\nAfter=network.target\n\n[Service]\nType=simple\nUser=${user}\nWorkingDirectory=${dir}\nExecStart=${node} ${join(dir,'index.js')}\nRestart=on-failure\nRestartSec=5\nEnvironment=PORT=${LLAMA_PORT}\n\n[Install]\nWantedBy=multi-user.target`,
-      commands: [`sudo nano /etc/systemd/system/icadp-llama.service`,`sudo systemctl daemon-reload`,`sudo systemctl enable --now icadp-llama`,`sudo systemctl status icadp-llama`],
+      unitFile: `/etc/systemd/system/bkg-llama.service`,
+      content: `[Unit]\nDescription=bKG node-llama-cpp inference server\nAfter=network.target\n\n[Service]\nType=simple\nUser=${user}\nWorkingDirectory=${dir}\nExecStart=${node} ${join(dir,'index.js')}\nRestart=on-failure\nRestartSec=5\nEnvironment=PORT=${LLAMA_PORT}\n\n[Install]\nWantedBy=multi-user.target`,
+      commands: [`sudo nano /etc/systemd/system/bkg-llama.service`,`sudo systemctl daemon-reload`,`sudo systemctl enable --now bkg-llama`,`sudo systemctl status bkg-llama`],
     },
     ollama: {
       installCommand: `curl -fsSL https://ollama.com/install.sh | sh`,
@@ -306,6 +505,34 @@ app.get('/plugins/search', async (req, res) => {
   res.json(results);
 });
 
+// ── /sandbox/* — bKG Agent Hub (sandbox-agent proxy) ─────────────────────────
+//
+// sandbox-agent runs on port 2468 and provides a universal HTTP API for
+// controlling coding agents (pi, Claude Code, Codex, OpenCode, Cursor, Amp).
+// bKG proxies all /sandbox/* requests to it and adds start/stop controls.
+
+app.get('/sandbox/status', async (_req, res) => {
+  res.json(await getSandboxAgentStatus());
+});
+
+app.post('/sandbox/start', async (_req, res) => {
+  try { res.json(await startSandboxAgent()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/sandbox/stop', (_req, res) => {
+  res.json(stopSandboxAgent());
+});
+
+app.get('/sandbox/logs', (_req, res) => {
+  res.json({ lines: getSandboxAgentLogs() });
+});
+
+// Proxy all other /sandbox/* requests to the sandbox-agent server
+app.all('/sandbox/*', async (req, res) => {
+  await proxyToSandboxAgent(req, res);
+});
+
 // ── /settings — agent config ──────────────────────────────────────────────────
 
 app.get('/settings', (_req, res) => {
@@ -342,7 +569,7 @@ app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 // Write PID file so icadp.sh can track and kill us reliably
-const PID_DIR  = join(__dir, '../.icadp/run');
+const PID_DIR  = join(__dir, '../.bkg/run');
 const PID_FILE = join(PID_DIR, 'serve.pid');
 
 try {
@@ -354,7 +581,7 @@ const httpServer = app.listen(PORT, HOST, () => {
   _ready = true;
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║       ICADP 3.0 — Unified Server  (pi-agent-core)       ║
+║       bKG — Unified Server  (pi-agent-core)       ║
 ╠══════════════════════════════════════════════════════════╣
 ║  App       : http://localhost:${PORT}
 ║  Admin     : http://localhost:${PORT}/admin

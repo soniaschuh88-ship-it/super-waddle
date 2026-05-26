@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# icadp.sh — ICADP 3.0 Process Manager
+# icadp.sh — bKG Process Manager
 #
 # Usage:
 #   ./icadp.sh start      Start the app (kills any existing instance first)
@@ -12,7 +12,7 @@
 #   ./icadp.sh logs       Tail all log files
 #   ./icadp.sh logs serve Tail a specific log  (serve|tunnel|llama|ollama)
 #
-# Environment variables (can also be set in .icadp.env):
+# Environment variables (can also be set in .bkg.env):
 #   ICADP_PORT        App server port          (default: 4000)
 #   ICADP_LLAMA_PORT  llama-cpp port           (default: 8001)
 #   ICADP_OLLAMA_PORT Ollama port              (default: 11434)
@@ -35,13 +35,13 @@ banner() { echo -e "\n${BOLD}${CYAN}▶ $*${NC}"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PID_DIR="$SCRIPT_DIR/.icadp/run"
-LOG_DIR="$SCRIPT_DIR/.icadp/logs"
-ENV_FILE="$SCRIPT_DIR/.icadp.env"
+PID_DIR="$SCRIPT_DIR/.bkg/run"
+LOG_DIR="$SCRIPT_DIR/.bkg/logs"
+ENV_FILE="$SCRIPT_DIR/.bkg.env"
 
 mkdir -p "$PID_DIR" "$LOG_DIR"
 
-# ── Load .icadp.env if it exists ──────────────────────────────────────────────
+# ── Load .bkg.env if it exists ──────────────────────────────────────────────
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   set -a; source "$ENV_FILE"; set +a
@@ -176,7 +176,7 @@ cmd_build() {
 # ── STOP ──────────────────────────────────────────────────────────────────────
 
 cmd_stop() {
-  banner "Stopping ICADP services"
+  banner "Stopping bKG services"
 
   # Vite dev server
   if is_pid_running "$PID_DEV"; then
@@ -210,13 +210,13 @@ cmd_stop() {
   pkill -f "node.*serve\.js" 2>/dev/null || true
   pkill -f "ssh.*serveo"     2>/dev/null || true
 
-  echo -e "${DIM}  All ICADP processes stopped.${NC}"
+  echo -e "${DIM}  All bKG processes stopped.${NC}"
 }
 
 # ── START ─────────────────────────────────────────────────────────────────────
 
 cmd_start() {
-  banner "Starting ICADP 3.0"
+  banner "Starting bKG"
 
   # ── 1. Stop anything already running ───────────────────────────────────────
   info "Checking for existing processes…"
@@ -296,11 +296,11 @@ cmd_start() {
 
   # ── 6. Summary ───────────────────────────────────────────────────────────────
   echo ""
-  echo -e "  ${BOLD}ICADP 3.0 is running${NC}"
+  echo -e "  ${BOLD}bKG is running${NC}"
   echo -e "  ${DIM}Local  :${NC}  http://localhost:${ICADP_PORT}"
   echo -e "  ${DIM}Admin  :${NC}  http://localhost:${ICADP_PORT}/admin"
   [[ -n "$tunnel_url" ]] && echo -e "  ${DIM}Public :${NC}  ${BOLD}${tunnel_url}${NC}"
-  echo -e "  ${DIM}Logs   :${NC}  .icadp/logs/"
+  echo -e "  ${DIM}Logs   :${NC}  .bkg/logs/"
   echo ""
   echo -e "  ${DIM}Stop with: ./icadp.sh stop${NC}"
 }
@@ -308,7 +308,7 @@ cmd_start() {
 # ── DEV ───────────────────────────────────────────────────────────────────────
 
 cmd_dev() {
-  banner "Starting ICADP 3.0 (development mode)"
+  banner "Starting bKG (development mode)"
 
   # Kill any existing instance
   if is_pid_running "$PID_DEV" || is_pid_running "$PID_SERVE"; then
@@ -347,7 +347,7 @@ cmd_dev() {
 # ── STATUS ────────────────────────────────────────────────────────────────────
 
 cmd_status() {
-  banner "ICADP 3.0 — Status"
+  banner "bKG — Status"
 
   # App server
   if is_pid_running "$PID_SERVE"; then
@@ -394,7 +394,7 @@ cmd_status() {
   fi
 
   echo ""
-  echo -e "  ${DIM}Logs: .icadp/logs/{serve,tunnel,dev,build}.log${NC}"
+  echo -e "  ${DIM}Logs: .bkg/logs/{serve,tunnel,dev,build}.log${NC}"
 }
 
 # ── LOGS ──────────────────────────────────────────────────────────────────────
@@ -430,10 +430,10 @@ cmd_restart() {
 cmd_help() {
   cat <<EOF
 
-${BOLD}ICADP 3.0 — Process Manager${NC}
+${BOLD}bKG — Process Manager${NC}
 
   ${CYAN}./icadp.sh start${NC}       Build (if needed) and start app + tunnel
-  ${CYAN}./icadp.sh stop${NC}        Stop all ICADP processes
+  ${CYAN}./icadp.sh stop${NC}        Stop all bKG processes
   ${CYAN}./icadp.sh restart${NC}     Stop then start
   ${CYAN}./icadp.sh status${NC}      Show running services and public URL
   ${CYAN}./icadp.sh build${NC}       Rebuild production bundle only
@@ -441,7 +441,7 @@ ${BOLD}ICADP 3.0 — Process Manager${NC}
   ${CYAN}./icadp.sh logs${NC}        Tail all log files
   ${CYAN}./icadp.sh logs serve${NC}  Tail a specific log (serve|tunnel|dev|build)
 
-${BOLD}Configuration (.icadp.env):${NC}
+${BOLD}Configuration (.bkg.env):${NC}
   ICADP_PORT=4000          App server port
   ICADP_LLAMA_PORT=8001    llama-cpp inference server port
   ICADP_OLLAMA_PORT=11434  Ollama port

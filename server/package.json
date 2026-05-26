@@ -17,9 +17,12 @@
     "@earendil-works/pi-agent-core": "^0.75.5",
     "@earendil-works/pi-ai": "^0.75.5",
     "@earendil-works/pi-coding-agent": "^0.75.5",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.19.2",
-    "node-llama-cpp": "^3.0.0"
+    "node-llama-cpp": "^3.0.0",
+    "sandbox-agent": "^0.4.2"
   },
   "engines": {
     "node": ">=20"

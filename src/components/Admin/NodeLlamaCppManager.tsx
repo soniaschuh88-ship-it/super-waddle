@@ -12,7 +12,7 @@ import {
 
 const MAX_SIZE_B = 1.0; // default max model size in admin recommendations
 
-const DEFAULT_URL = localStorage.getItem('icadp_llamacpp_url') ?? 'http://localhost:8001';
+const DEFAULT_URL = localStorage.getItem('bkg_llamacpp_url') ?? 'http://localhost:8001';
 
 interface PullState { message: string; pct: number; }
 
@@ -70,7 +70,7 @@ export function NodeLlamaCppManager() {
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <label className="text-[11px] font-semibold text-muted uppercase tracking-wider block mb-1">Server URL</label>
-          <input type="url" value={url} onChange={e=>{ setUrl(e.target.value); localStorage.setItem('icadp_llamacpp_url',e.target.value); }}
+          <input type="url" value={url} onChange={e=>{ setUrl(e.target.value); localStorage.setItem('bkg_llamacpp_url',e.target.value); }}
             className="w-full bg-base border border-border text-text-primary text-sm font-mono rounded-lg px-3 py-2 focus:outline-none focus:border-accent/60"/>
         </div>
         <button onClick={refresh} disabled={loading} className="mt-5 flex items-center gap-1.5 px-3 py-2 text-sm border border-border text-muted hover:text-accent hover:border-accent/40 rounded-lg transition-colors">

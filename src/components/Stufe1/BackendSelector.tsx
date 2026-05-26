@@ -339,8 +339,8 @@ export function BackendSelector() {
                 </div>
               )}
 
-              {/* Model buttons */}
-              {ollamaDisplay.length > 0 && (
+              {/* Model buttons — only shown when server is online */}
+              {serverOnline && ollamaDisplay.length > 0 && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-48 overflow-y-auto pr-1">
                   {ollamaDisplay.map(name => {
                     const isReal = ollamaModels !== null && ollamaModels.includes(name);
@@ -402,28 +402,22 @@ export function BackendSelector() {
                 </div>
               )}
 
-              {llamaDisplay.length > 0 && (
+              {/* Model buttons — only shown when server is online with real models */}
+              {serverOnline && llamaDisplay.filter(m => m.real).length > 0 && (
                 <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1">
-                  {llamaDisplay.map(m => {
+                  {llamaDisplay.filter(m => m.real).map(m => {
                     const sel = backendConfig.modelId === m.id;
                     return (
                       <button key={m.id} onClick={() => setModel(m.id)}
                         className={[
                           'flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors',
-                          sel ? 'bg-accent/15 border-accent/40'
-                            : m.real ? 'bg-base border-border hover:border-accent/30'
-                            : 'bg-base border-border hover:border-accent/30 opacity-50',
+                          sel ? 'bg-accent/15 border-accent/40' : 'bg-base border-border hover:border-accent/30',
                         ].join(' ')}
                       >
-                        {m.real
-                          ? <CheckCircle size={11} className="text-success flex-shrink-0"/>
-                          : <HardDrive   size={11} className="text-muted/40 flex-shrink-0"/>}
+                        <CheckCircle size={11} className="text-success flex-shrink-0"/>
                         <span className={`text-xs font-mono font-semibold truncate flex-1 ${sel ? 'text-accent' : 'text-text-primary'}`}>
                           {m.label}
                         </span>
-                        {!m.real && (
-                          <span className="text-[10px] text-muted/40 flex-shrink-0">not downloaded</span>
-                        )}
                       </button>
                     );
                   })}

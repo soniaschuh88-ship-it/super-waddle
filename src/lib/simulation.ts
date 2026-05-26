@@ -38,7 +38,7 @@ export function buildSimulationTimeline(bundle: GeneratedBundle): SimulationLogE
     entries.push({ id: uid(), timestamp: t, action, message, filePath });
     t += 80 + Math.floor(Math.random() * 120);
   }
-  add('info', '▶  ICADP Executor Agent v3.0 starting'); t+=200;
+  add('info', '▶  bKG Executor Agent v3.0 starting'); t+=200;
   add('info', '📦  Receiving project_bundle.zip'); t+=300;
   add('info', '🔍  Unpacking project_bundle.zip…'); t+=300;
   add('create', '  ↳ Reading manifest.json', 'manifest.json'); t+=150;

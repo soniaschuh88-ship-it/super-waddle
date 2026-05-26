@@ -1,47 +1,90 @@
-/** src/components/Admin/AdminAuth.tsx – Simple password gate for the admin dashboard. */
+/**
+ * src/components/Admin/AdminAuth.tsx
+ *
+ * Admin password gate backed by the server-side /auth/login endpoint.
+ * Password is verified against the bcrypt hash in .env (BKG_ADMIN_PASSWORD_HASH).
+ * Falls back to default "bkg_admin_2024" if no hash is configured.
+ * Token stored in sessionStorage — expires after 7 days (server-enforced).
+ */
 import { useState } from 'react';
-import { Lock, Eye, EyeOff, Cpu } from 'lucide-react';
+import { Lock, Eye, EyeOff, Cpu, AlertCircle } from 'lucide-react';
 
-const DEFAULT_PASSWORD = 'icadp3admin';
-const STORAGE_KEY      = 'icadp_admin_hash';
+const TOKEN_KEY = 'bkg_admin_token';
+const DEFAULT_PW = 'bkg_admin_2024';
 
-async function sha256(text: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+
+export async function login(password: string): Promise<string> {
+  const r = await fetch('/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({})) as { error?: string };
+    throw new Error(d.error ?? 'Login failed');
+  }
+  const { token } = await r.json() as { token: string };
+  sessionStorage.setItem(TOKEN_KEY, token);
+  return token;
 }
 
-/** Initialise the stored hash on first visit. Returns the hash. */
-async function ensureDefaultHash(): Promise<string> {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) return stored;
-  const h = await sha256(DEFAULT_PASSWORD);
-  localStorage.setItem(STORAGE_KEY, h);
-  return h;
+export function logout(): void {
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
+export function getToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
+export async function verifyStoredToken(): Promise<boolean> {
+  const token = getToken();
+  if (!token) return false;
+  try {
+    const r = await fetch('/auth/verify', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// Legacy compat (some existing components call checkPassword / changePassword)
 export async function checkPassword(input: string): Promise<boolean> {
-  const stored = await ensureDefaultHash();
-  return (await sha256(input)) === stored;
+  try { await login(input); return true; } catch { return false; }
+}
+export async function changePassword(_newPw: string): Promise<void> {
+  // No-op: password is set via BKG_ADMIN_PASSWORD_HASH in .env
 }
 
-export async function changePassword(newPassword: string): Promise<void> {
-  localStorage.setItem(STORAGE_KEY, await sha256(newPassword));
-}
+// ── Login UI ──────────────────────────────────────────────────────────────────
 
 interface AdminAuthProps { onUnlock: () => void; }
 
 export function AdminAuth({ onUnlock }: AdminAuthProps) {
-  const [pw, setPw]     = useState('');
-  const [show, setShow] = useState(false);
-  const [err, setErr]   = useState('');
-  const [busy, setBusy] = useState(false);
+  const [pw,       setPw]       = useState('');
+  const [show,     setShow]     = useState(false);
+  const [err,      setErr]      = useState('');
+  const [busy,     setBusy]     = useState(false);
+  const [noServer, setNoServer] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true); setErr('');
-    const ok = await checkPassword(pw);
+    setBusy(true); setErr(''); setNoServer(false);
+    try {
+      await login(pw);
+      onUnlock();
+    } catch (ex) {
+      const msg = ex instanceof Error ? ex.message : 'Login failed';
+      if (msg.includes('fetch') || msg.includes('network')) {
+        setNoServer(true);
+        setErr('Cannot reach bKG server. Is it running?');
+      } else {
+        setErr(msg);
+        setPw('');
+      }
+    }
     setBusy(false);
-    if (ok) { onUnlock(); } else { setErr('Wrong password.'); setPw(''); }
   };
 
   return (
@@ -53,7 +96,7 @@ export function AdminAuth({ onUnlock }: AdminAuthProps) {
               <Cpu size={24} className="text-accent"/>
             </div>
             <div className="text-center">
-              <h1 className="text-base font-semibold text-text-primary">ICADP 3.0 Admin</h1>
+              <h1 className="text-base font-semibold text-text-primary">bKG Admin</h1>
               <p className="text-xs text-muted mt-0.5">Enter password to continue</p>
             </div>
           </div>
@@ -63,29 +106,51 @@ export function AdminAuth({ onUnlock }: AdminAuthProps) {
               <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Password</label>
               <div className="relative">
                 <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted/50"/>
-                <input type={show?'text':'password'} value={pw} onChange={e=>setPw(e.target.value)}
+                <input
+                  type={show ? 'text' : 'password'}
+                  value={pw}
+                  onChange={e => setPw(e.target.value)}
                   className="w-full bg-base border border-border text-text-primary text-sm rounded-lg pl-9 pr-10 py-2.5 focus:outline-none focus:border-accent/60 focus:ring-1 focus:ring-accent/20"
-                  placeholder="Enter password" autoFocus/>
-                <button type="button" onClick={()=>setShow(p=>!p)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text-primary transition-colors">
-                  {show?<EyeOff size={14}/>:<Eye size={14}/>}
+                  placeholder="Enter admin password"
+                  autoFocus
+                />
+                <button type="button" onClick={() => setShow(p => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text-primary transition-colors">
+                  {show ? <EyeOff size={14}/> : <Eye size={14}/>}
                 </button>
               </div>
-              {err && <p className="text-xs text-error">{err}</p>}
+              {err && (
+                <p className="text-xs text-error flex items-center gap-1">
+                  <AlertCircle size={11}/>
+                  {err}
+                </p>
+              )}
             </div>
 
-            <button type="submit" disabled={!pw.trim()||busy}
-              className={['w-full py-2.5 rounded-lg font-semibold text-sm tracking-wide transition-all',
-                pw.trim()&&!busy?'bg-accent text-base hover:bg-accent-dim btn-glow cursor-pointer':'bg-surface border border-border text-muted cursor-not-allowed'].join(' ')}>
-              {busy?'Checking…':'Unlock Dashboard'}
+            <button type="submit" disabled={!pw.trim() || busy}
+              className={[
+                'w-full py-2.5 rounded-lg font-semibold text-sm tracking-wide transition-all',
+                pw.trim() && !busy
+                  ? 'bg-accent text-base hover:bg-accent-dim btn-glow cursor-pointer'
+                  : 'bg-surface border border-border text-muted cursor-not-allowed',
+              ].join(' ')}>
+              {busy ? 'Verifying…' : 'Unlock Dashboard'}
             </button>
 
-            <p className="text-center text-[11px] text-muted/60">
-              Default password: <code className="font-mono bg-border/50 px-1 py-0.5 rounded">{DEFAULT_PASSWORD}</code>
-            </p>
+            {noServer ? (
+              <p className="text-center text-[11px] text-warning">
+                Start the server: <code className="font-mono bg-border/50 px-1 rounded">./bkg.sh start</code>
+              </p>
+            ) : (
+              <p className="text-center text-[11px] text-muted/60">
+                Default: <code className="font-mono bg-border/50 px-1 py-0.5 rounded">{DEFAULT_PW}</code>
+                {' '}· set <code className="font-mono bg-border/50 px-1 rounded">BKG_ADMIN_PASSWORD_HASH</code> in .env
+              </p>
+            )}
           </form>
         </div>
         <p className="text-center mt-4 text-xs text-muted/40">
-          <a href="/" className="hover:text-muted transition-colors">← Back to ICADP 3.0</a>
+          <a href="/" className="hover:text-muted transition-colors">← Back to bKG</a>
         </p>
       </div>
     </div>

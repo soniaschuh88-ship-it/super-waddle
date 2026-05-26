@@ -4,7 +4,7 @@
 import initSqlJs, { type Database } from 'sql.js';
 import type { Project, FeatureProposal, GeneratedBundle, ValidationResult } from '@/types';
 
-const STORAGE_KEY = 'icadp_db';
+const STORAGE_KEY = 'bkg_db';
 let _db: Database | null = null;
 
 export async function openDb(): Promise<Database> {

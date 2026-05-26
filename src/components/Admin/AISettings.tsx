@@ -5,7 +5,7 @@ import { MODEL_OPTIONS } from '@/lib/webllm';
 import { OLLAMA_POPULAR_MODELS } from '@/lib/llm-client';
 import type { BackendType, BackendConfig } from '@/types';
 
-const SETTINGS_KEY = 'icadp_default_settings';
+const SETTINGS_KEY = 'bkg_default_settings';
 
 interface SavedSettings {
   backendType: BackendType;

@@ -305,11 +305,16 @@ export function Dashboard({ onTestModel }: { onTestModel?: () => void }) {
 
   // ── Select a backend from the dashboard ────────────────────────────────────
 
+  // Only allow selecting a backend if it's reachable (or WebGPU which is always "online")
   const selectBackend = (type: 'webgpu' | 'ollama' | 'llama-cpp') => {
+    const s = modelStatuses.find(ms => ms.type === type);
+    // Block selection of REST backends that are confirmed offline
+    if (type !== 'webgpu' && s?.online === false) return;
+
     const defaults: Record<string, string> = {
       webgpu:       'Llama-3.2-1B-Instruct-q4f32_1-MLC',
-      ollama:       modelStatuses.find(s=>s.type==='ollama')?.models[0] ?? 'qwen2.5:1.5b',
-      'llama-cpp':  modelStatuses.find(s=>s.type==='llama-cpp')?.models[0] ?? '',
+      ollama:       modelStatuses.find(ms=>ms.type==='ollama')?.models[0] ?? 'qwen2.5:1.5b',
+      'llama-cpp':  modelStatuses.find(ms=>ms.type==='llama-cpp')?.models[0] ?? '',
     };
     dispatch({
       type: 'SET_BACKEND',
@@ -341,10 +346,10 @@ export function Dashboard({ onTestModel }: { onTestModel?: () => void }) {
       {/* Welcome headline */}
       <div>
         <h1 className="text-2xl font-bold text-text-primary tracking-tight">
-          ICADP 3.0
+          bKG
         </h1>
         <p className="text-sm text-muted mt-1">
-          Interactive Computer-Aided Development Plan — AI coding agent powered by local models.
+          best Known Garbage — local AI coding agent &amp; plan workspace
         </p>
       </div>
 

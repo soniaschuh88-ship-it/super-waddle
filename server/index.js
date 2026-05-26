@@ -1,5 +1,5 @@
 /**
- * server/index.js — node-llama-cpp inference server for ICADP 3.0  v3.0
+ * server/index.js — node-llama-cpp inference server for bKG  v3.0
  *
  * Full feature set:
  *   • Chat completions     streaming + non-streaming, system prompts, multi-turn history
@@ -552,7 +552,7 @@ if (process.env.MODEL_PATH) {
 app.listen(PORT, HOST, () => {
   console.log(`
 ╔════════════════════════════════════════════════════════════╗
-║       ICADP node-llama-cpp Server  v3.0                    ║
+║       bKG node-llama-cpp Server  v3.0                    ║
 ╠════════════════════════════════════════════════════════════╣
 ║  http://${HOST}:${PORT}
 ║  Model dir: ${MODEL_DIR}

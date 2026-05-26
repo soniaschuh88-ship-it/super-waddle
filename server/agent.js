@@ -1,5 +1,5 @@
 /**
- * server/agent.js — ICADP Coding Agent Engine
+ * server/agent.js — bKG Coding Agent Engine
  *
  * Uses @earendil-works/pi-coding-agent as the agent harness, rebranded for ICADP.
  * Registers our local model servers (node-llama-cpp and Ollama) as custom providers,
@@ -15,9 +15,9 @@
  *   • find   — finds files matching patterns
  *   • ls     — lists directory contents
  *
- * Sessions are stored in JSONL format at ~/.icadp/sessions/.
- * Extensions load from ~/.icadp/extensions/ and ./.icadp/extensions/.
- * Skills load from ~/.icadp/skills/ and ./.icadp/skills/.
+ * Sessions are stored in JSONL format at ~/.bkg/sessions/.
+ * Extensions load from ~/.bkg/extensions/ and ./.bkg/extensions/.
+ * Skills load from ~/.bkg/skills/ and ./.bkg/skills/.
  */
 
 import {
@@ -35,14 +35,18 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 
-const __dir  = dirname(fileURLToPath(import.meta.url));
-const ICADP_DIR = join(homedir(), '.icadp');
+const __dir   = dirname(fileURLToPath(import.meta.url));
+// BKG_DIR env var overrides the default config directory
+const BKG_DIR = process.env.BKG_DIR ?? join(homedir(), '.bkg');
 
-// ── ICADP config directory ────────────────────────────────────────────────────
+// ── bKG config directory ──────────────────────────────────────────────────────
 
 for (const sub of ['sessions', 'extensions', 'skills', 'prompts', 'plugins/npm', 'plugins/git']) {
-  mkdirSync(join(ICADP_DIR, sub), { recursive: true });
+  mkdirSync(join(BKG_DIR, sub), { recursive: true });
 }
+
+// Alias for backwards compat within this file
+const ICADP_DIR = BKG_DIR;
 
 // ── Default agent settings ────────────────────────────────────────────────────
 
@@ -167,7 +171,7 @@ export async function startSession(options = {}) {
   });
   await resourceLoader.reload();
 
-  // Session manager: persists JSONL to ~/.icadp/sessions/
+  // Session manager: persists JSONL to ~/.bkg/sessions/
   const sessionMgr = SessionManager.create(join(ICADP_DIR, 'sessions'), cwd);
 
   // Create the pi session

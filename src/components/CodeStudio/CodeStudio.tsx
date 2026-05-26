@@ -1,7 +1,7 @@
 /**
  * src/components/CodeStudio/CodeStudio.tsx
  *
- * ICADP Code Studio — powered by @earendil-works/pi-agent-core
+ * bKG Code Studio — powered by @earendil-works/pi-agent-core
  *
  * The agent runs server-side via serve.js with real tools:
  *   bash • read • write • edit • grep • find • ls
@@ -269,10 +269,10 @@ export function CodeStudio() {
     setLogs([]); setFiles([]); setSelected(null);
     setDone(false); setRunning(true);
 
-    addLog({ kind: 'system', text: '🚀 Starting ICADP Coding Agent (pi-agent-core)…' });
+    addLog({ kind: 'system', text: '🚀 Starting bKG Coding Agent (pi-agent-core)…' });
 
     try {
-      const prompt    = buildInitialPrompt(editableBundle, process.cwd?.() ?? '/tmp/icadp-project');
+      const prompt    = buildInitialPrompt(editableBundle, process.cwd?.() ?? '/tmp/bkg-project');
       const { sessionId: sid } = await agentStartSession({
         initialMessage: prompt,
         tools: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'],
@@ -454,7 +454,7 @@ export function CodeStudio() {
               <span className="w-3 h-3 rounded-full bg-warning/60"/>
               <span className="w-3 h-3 rounded-full bg-success/60"/>
             </div>
-            <span className="flex-1 text-center text-[11px] font-mono text-muted/60">icadp-agent</span>
+            <span className="flex-1 text-center text-[11px] font-mono text-muted/60">bkg-agent</span>
             <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${running ? 'text-accent bg-accent/10 animate-pulse-slow' : 'text-muted bg-border/50'}`}>
               {running ? '● RUN' : done ? '● DONE' : '● IDLE'}
             </span>

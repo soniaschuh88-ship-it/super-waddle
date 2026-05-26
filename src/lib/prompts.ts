@@ -1,5 +1,5 @@
 /**
- * src/lib/prompts.ts – All prompt templates for ICADP 3.0.
+ * src/lib/prompts.ts – All prompt templates for bKG.
  */
 import type { FeatureProposal } from '@/types';
 

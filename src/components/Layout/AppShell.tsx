@@ -1,6 +1,6 @@
 /** src/components/Layout/AppShell.tsx – Top-level layout with fixed header. */
 import { type ReactNode } from 'react';
-import { Cpu, X, Settings, LayoutDashboard, Plus } from 'lucide-react';
+import { Cpu, X, Settings, LayoutDashboard, Plus, Bot } from 'lucide-react';
 import { StageProgress } from './StageProgress';
 import { useAppState }   from '@/context/AppContext';
 
@@ -23,8 +23,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Cpu size={18} className="text-accent"/>
             </div>
             <div className="flex flex-col leading-none">
-              <span className="text-sm font-semibold text-text-primary tracking-tight">ICADP</span>
-              <span className="text-[10px] text-accent font-mono tracking-widest">v3.0</span>
+              <span className="text-sm font-semibold text-text-primary tracking-tight">bKG</span>
+              <span className="text-[10px] text-accent font-mono tracking-widest">best Known Garbage</span>
             </div>
           </button>
 
@@ -66,6 +66,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span>New Plan</span>
             </button>
           )}
+
+          {/* Agent Hub link */}
+          <button
+            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'agenthub' })}
+            className={['flex items-center gap-1 text-xs px-2 py-1.5 rounded hover:bg-surface transition-colors',
+              state.stage === 'agenthub' ? 'text-accent' : 'text-muted hover:text-text-primary'].join(' ')}
+          >
+            <Bot size={13}/>
+            <span className="hidden sm:inline">Agents</span>
+          </button>
 
           {/* Admin link (shows label on larger screens) */}
           <a

@@ -187,9 +187,9 @@ app.get('/systemd-units', (req, res) => {
 
   res.json({
     llama: {
-      unitFile: `/etc/systemd/system/icadp-llama.service`,
+      unitFile: `/etc/systemd/system/bkg-llama.service`,
       content: `[Unit]
-Description=ICADP node-llama-cpp inference server
+Description=bKG node-llama-cpp inference server
 After=network.target
 
 [Service]
@@ -206,11 +206,11 @@ Environment=GPU_LAYERS=-1
 [Install]
 WantedBy=multi-user.target`,
       commands: [
-        `sudo nano /etc/systemd/system/icadp-llama.service  # paste unit file`,
+        `sudo nano /etc/systemd/system/bkg-llama.service  # paste unit file`,
         `sudo systemctl daemon-reload`,
-        `sudo systemctl enable icadp-llama`,
-        `sudo systemctl start icadp-llama`,
-        `sudo systemctl status icadp-llama`,
+        `sudo systemctl enable bkg-llama`,
+        `sudo systemctl start bkg-llama`,
+        `sudo systemctl status bkg-llama`,
       ],
     },
     ollama: {

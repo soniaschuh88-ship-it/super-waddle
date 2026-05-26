@@ -1,7 +1,7 @@
-// ICADP 3.0 – Core Type Definitions
+// bKG – Core Type Definitions
 
-/** The five top-level stages. 'home' is the landing dashboard. */
-export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3';
+/** The six top-level stages. 'home' is the landing dashboard, 'agenthub' is the Agent Hub. */
+export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3' | 'agenthub';
 export type Stufe1Step = 'idea' | 'features' | 'generating';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error';
 /** Inference backend selection.
@@ -93,7 +93,7 @@ export interface Project {
 
 export interface EngineProgress { progress: number; text: string; }
 
-// ── Pi Agent / ICADP Coding Agent ─────────────────────────────────────────────
+// ── Pi Agent / bKG Coding Agent ─────────────────────────────────────────────
 
 /** A live agent session (backed by pi-agent-core). */
 export interface AgentSession {
@@ -120,7 +120,7 @@ export interface AgentEvent {
   messages?:  unknown[];
 }
 
-/** Agent settings stored at ~/.icadp/settings.json */
+/** Agent settings stored at ~/.bkg/settings.json */
 export interface AgentSettings {
   backendType:         'llama-cpp' | 'ollama';
   serverUrl:           string;
