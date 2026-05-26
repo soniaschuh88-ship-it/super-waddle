@@ -640,3 +640,109 @@ Events: `text · message · tool_call · tool_result · permission · error · s
 | `/plugins/*` | 6 | Plugin manager |
 | `/settings` | 2 | Agent configuration |
 | `GET /health*` | 2 | Liveness + readiness probes |
+
+---
+
+## 15. Game Studio (Single-Player Blueprint Wizard)
+
+### Blueprint System (`server/bkg-game-blueprint.js`)
+- [x] Full game blueprint schema: World · Story · NPCs · Monsters · Quests · Loot · Levels · Zones
+- [x] CRUD: create, get, list (by mode), update, patch section, delete
+- [x] `blueprintStats()` — per-section completion percentage
+- [x] AI prompts for 9 sections: world/story/npcs/monsters/quests/loot/levels/zones/gameplan
+- [x] Entity templates: npcTemplate, monsterTemplate, questTemplate, itemTemplate, zoneTemplate
+- [x] Stored in `~/.bkg/blueprints/<id>.json` (JSON, human-readable)
+
+### AI Generation (SSE Streaming)
+- [x] `POST /game/blueprint/:id/generate/:section` — token streaming via SSE
+- [x] Key resolution: user profile → global admin → env var
+- [x] Supports NVIDIA NIM (nvapi-*) and OpenRouter (any other key)
+- [x] Auto-parses JSON arrays (npcs/monsters/quests/zones) from streamed text
+- [x] Auto-saves parsed data + full text back to blueprint on completion
+
+### Game Wizard UI (`src/components/Game/GameWizard.tsx`)
+- [x] 10-step pipeline: Setup → World → Story → NPCs → Monsters → Quests → Loot → Levels → Zones → Launch
+- [x] Live streaming token output per step
+- [x] NPCs: card grid with type/faction/level
+- [x] Monsters: responsive table with tier colour-coding
+- [x] Quests: type-coloured list (main=amber, side=cyan, hidden=purple)
+- [x] Loot: tier badge strip + item list with rarity colours
+- [x] Levels: class chips + stats grid
+- [x] Zones: 2-column grid with type accent colours
+- [x] Launch: completion meter, JSON viewer, Flow task + World Builder shortcuts
+- [x] Single-player only (mode=singleplayer enforced)
+
+---
+
+## 16. Admin: Game Blueprint Manager
+
+### MMOCreator Panel (`src/components/Admin/MMOCreator.tsx`)
+- [x] New admin tab: "Game Blueprints" (Globe icon, general section)
+- [x] Blueprint list: MMO worlds + single-player blueprints in two sections
+- [x] Per-blueprint: genre, tone, status badge, section completion progress bar
+- [x] Create MMO world modal: name, concept, genre, tone, max players, PvP toggle
+- [x] Blueprint detail: 9-section card grid with generate/edit/regen per section
+- [x] Live streaming generation in section cards
+- [x] Inline JSON editor per section with save/cancel
+- [x] Publish/Unpublish button (LIVE badge visible to users in Game Client)
+- [x] Status bar: shows published world names + count
+- [x] Delete blueprint with confirmation
+
+---
+
+## 17. Game Client (User MMO Lobby)
+
+### GameClient (`src/components/Game/GameClient.tsx`, stage: `game-client`)
+- [x] Fetches `/game/mmo/worlds` (published blueprints only)
+- [x] World cards: name, LIVE badge, genre/tone, stats (NPCs/Monsters/Quests/Zones)
+- [x] Per-genre colour theming (rpg=purple, fps=red, sci-fi=cyan, etc.)
+- [x] Completion progress bar per world
+- [x] "Enter World" button → navigates to MMO Engine
+- [x] Empty state with redirect to single-player Game Studio
+- [x] Single-player CTA in header + footer
+- [x] Feature strip: Items & Loot · Progression · Open World
+
+---
+
+## 18. World Builder
+
+### WorldBuilder (`src/components/Game/WorldBuilder.tsx`, stage: `world-builder`)
+- [x] 4-step flow: Choose Blueprint → Configure → Generate → Open in Voxel
+- [x] Blueprint picker: shows all blueprints with zone count + existing worldId
+- [x] World name + seed input with random-seed button
+- [x] Info panel: what gets generated from blueprint params
+- [x] Creates VLDB world via `POST /vldb/worlds` using blueprint biomes/size/seed
+- [x] Links `worldId` back to blueprint via `PUT /game/blueprint/:id`
+- [x] Step 4: "Open in Voxel Engine" + "Build Another World" options
+
+---
+
+## 19. Infrastructure Updates
+
+### Docker
+- [x] Multi-stage Dockerfile (node:22-alpine, non-root `bkg` user)
+- [x] `docker-compose.yml` with `bkg-data` named volume
+- [x] `.dockerignore` — excludes node_modules, dist, *.gguf
+- [x] HEALTHCHECK via wget to `/health/ready`
+
+### Install Script (`install.sh`)
+- [x] Interactive: "1) Local install  2) Docker"
+- [x] Local: checks Node 20+, npm install, build, start server
+- [x] Docker: `docker compose build && up -d`
+- [x] Subcommands: start, stop, install, docker-start, local-start
+- [x] Shows admin password on first start from `~/.bkg/install.key`
+
+### First-Run Admin Key
+- [x] Auto-generates `bkg_<12hex>` password on fresh install
+- [x] Stores bcrypt hash in `~/.bkg/admin.env`
+- [x] Stores plaintext in `~/.bkg/install.key` (one-time)
+- [x] Prints prominently in terminal (bordered box)
+- [x] `GET /admin/install-key` — delivers key once, deletes file + memory
+- [x] Admin UI shows amber banner with key + copy button + pre-filled password field
+
+### REST API additions
+- [x] `/game/blueprint/*` — 8 CRUD endpoints + SSE generation
+- [x] `/game/mmo/*` — 3 MMO world management endpoints
+- [x] `/admin/db/*` — 4 DB viewer endpoints (databases, tables, rows, SQL query)
+- [x] `/admin/install-key` — one-time install key delivery
+
