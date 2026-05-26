@@ -73,6 +73,14 @@ import {
 } from './sandbox.js';
 
 import {
+  listAgents, createSession as hubCreateSession, sendMessage as hubSendMessage,
+  streamSessionEvents, listSessionEvents, listSessions as hubListSessions,
+  getSession as hubGetSession, destroySession as hubDestroySession,
+  abortSession as hubAbortSession, replyPermission,
+  fsRead, fsWrite, fsDelete, fsList, execInSession, hubHealth,
+} from './bkg-hub.js';
+
+import {
   PROVIDERS, getProvider, providersByTier, resolveProviderKey, fetchProviderModels,
 } from './providers.js';
 
@@ -645,6 +653,140 @@ app.get('/plugins/search', async (req, res) => {
   const q       = req.query.q ?? 'pi-package';
   const results = await searchNpm(q);
   res.json(results);
+});
+
+// ── /hub/* — bKG Agent Hub (pure Node.js, full feature set) ─────────────────
+//
+// Rebraneded from sandbox-agent (MIT, rivet-dev/sandbox-agent).
+// All features implemented in Node.js without the Rust binary.
+//
+// Agents: pi · claude-code · codex · opencode · amp
+// Features: sessions · SSE streaming · permissions · file system · process exec
+
+/** GET /hub/health */
+app.get('/hub/health', (_req, res) => res.json(hubHealth()));
+
+/** GET /hub/agents — list available agents + installation status */
+app.get('/hub/agents', async (_req, res) => {
+  try { res.json(await listAgents()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /hub/sessions — list active sessions */
+app.get('/hub/sessions', (_req, res) => res.json(hubListSessions()));
+
+/** POST /hub/sessions — create a session
+ *  Body: { id?, agent, agentMode?, cwd?, initialMessage? }
+ */
+app.post('/hub/sessions', async (req, res) => {
+  const { id, agent = 'pi', agentMode = 'default', ...rest } = req.body ?? {};
+  const sessionId = id ?? `bkg-${Date.now()}`;
+  try {
+    const result = await hubCreateSession(sessionId, agent, agentMode, rest);
+    if (result.error) return res.status(409).json(result);
+    res.status(201).json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /hub/sessions/:id */
+app.get('/hub/sessions/:id', (req, res) => {
+  const s = hubGetSession(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Session not found' });
+  res.json(s);
+});
+
+/** DELETE /hub/sessions/:id */
+app.delete('/hub/sessions/:id', (req, res) => {
+  res.json(hubDestroySession(req.params.id));
+});
+
+/** POST /hub/sessions/:id/message — send a message
+ *  Body: { message: string }
+ */
+app.post('/hub/sessions/:id/message', async (req, res) => {
+  const { message } = req.body ?? {};
+  if (!message) return res.status(400).json({ error: 'message required' });
+  try {
+    await hubSendMessage(req.params.id, message);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /hub/sessions/:id/abort — abort current agent turn */
+app.post('/hub/sessions/:id/abort', (req, res) => {
+  res.json(hubAbortSession(req.params.id));
+});
+
+/** GET /hub/sessions/:id/events — SSE stream of events
+ *  Query: ?offset=0  (resume from event index)
+ */
+app.get('/hub/sessions/:id/events', (req, res) => {
+  const offset = parseInt(req.query.offset ?? '0', 10);
+  streamSessionEvents(req.params.id, req, res, offset);
+});
+
+/** GET /hub/sessions/:id/events/list — paginated event list (non-SSE)
+ *  Query: ?offset=0&limit=100
+ */
+app.get('/hub/sessions/:id/events/list', (req, res) => {
+  const offset = parseInt(req.query.offset ?? '0', 10);
+  const limit  = parseInt(req.query.limit  ?? '100', 10);
+  const result = listSessionEvents(req.params.id, offset, limit);
+  if (!result) return res.status(404).json({ error: 'Session not found' });
+  res.json(result);
+});
+
+/** POST /hub/sessions/:id/permission — reply to a permission request
+ *  Body: { approved: boolean, response?: string }
+ */
+app.post('/hub/sessions/:id/permission', (req, res) => {
+  const { approved, response } = req.body ?? {};
+  res.json(replyPermission(req.params.id, !!approved, response));
+});
+
+/** GET /hub/sessions/:id/fs — list files in session workspace
+ *  Query: ?path=. (relative path)
+ */
+app.get('/hub/sessions/:id/fs', (req, res) => {
+  try { res.json(fsList(req.params.id, req.query.path ?? '.')); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+/** GET /hub/sessions/:id/fs/read — read a file
+ *  Query: ?path=src/index.ts
+ */
+app.get('/hub/sessions/:id/fs/read', (req, res) => {
+  if (!req.query.path) return res.status(400).json({ error: 'path required' });
+  try { res.json(fsRead(req.params.id, req.query.path)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+/** PUT /hub/sessions/:id/fs/write — write a file
+ *  Body: { path: string, content: string }
+ */
+app.put('/hub/sessions/:id/fs/write', (req, res) => {
+  const { path: p, content } = req.body ?? {};
+  if (!p || content === undefined) return res.status(400).json({ error: 'path and content required' });
+  try { res.json(fsWrite(req.params.id, p, content)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+/** DELETE /hub/sessions/:id/fs/delete — delete a file
+ *  Query: ?path=file.txt
+ */
+app.delete('/hub/sessions/:id/fs/delete', (req, res) => {
+  if (!req.query.path) return res.status(400).json({ error: 'path required' });
+  try { res.json(fsDelete(req.params.id, req.query.path)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+/** POST /hub/sessions/:id/exec — execute a command (SSE stream)
+ *  Body: { command: string }
+ */
+app.post('/hub/sessions/:id/exec', (req, res) => {
+  const { command } = req.body ?? {};
+  if (!command) return res.status(400).json({ error: 'command required' });
+  execInSession(req.params.id, command, req, res);
 });
 
 // ── /sandbox/* — bKG Agent Hub (sandbox-agent proxy) ─────────────────────────
