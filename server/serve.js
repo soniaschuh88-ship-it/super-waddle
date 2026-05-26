@@ -102,6 +102,20 @@ import {
 } from './bkg-game.js';
 
 import {
+  VOXEL_TYPES, BIOMES, VOXEL_COLORS, voxel, chunkKey,
+  VoxelWorld, createWorld, getWorld, listWorlds, deleteWorld,
+  kernel as voxelKernel,
+} from './bkg-voxel.js';
+
+import {
+  vldb, MAT, PALETTE,
+  BitpackedChunk, rleEncode, rleDecode,
+  worldToChunkCoords,
+  CHUNK_SIZE, CHUNK_VOL, CHUNK_2BIT, CHUNK_4BIT,
+  generateChunk, readDeltas, applyDeltas, compressionRatio,
+} from './bkg-vldb.js';
+
+import {
   PROVIDERS, getProvider, providersByTier, resolveProviderKey, fetchProviderModels,
 } from './providers.js';
 
@@ -1314,6 +1328,405 @@ app.post('/game/create-task', (req, res) => {
 
     res.status(201).json(task);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── /voxel/* — bKG Voxel Engine ──────────────────────────────────────────────
+//
+// Node.js-controlled voxel simulation engine.
+// WASM-ready memory layout (hot-swap with AssemblyScript/C/Zig WASM module).
+// Integrates with Flow (tasks→regions) and Agent Hub (agent→mutations).
+
+/** GET /voxel/config — type registry, biome defs, color palette */
+app.get('/voxel/config', (_req, res) => {
+  res.json({
+    types:    VOXEL_TYPES,
+    biomes:   BIOMES,
+    colors:   VOXEL_COLORS,
+    kernel:   { isWASM: voxelKernel.isWASM, mode: voxelKernel.isWASM ? 'wasm' : 'js' },
+  });
+});
+
+/** GET /voxel/worlds — list all worlds */
+app.get('/voxel/worlds', (_req, res) => res.json(listWorlds()));
+
+/** POST /voxel/worlds — create a new world */
+app.post('/voxel/worlds', (req, res) => {
+  try {
+    const world = createWorld(req.body ?? {});
+    res.status(201).json(world.getWorldInfo());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** GET /voxel/worlds/:id — world info */
+app.get('/voxel/worlds/:id', (req, res) => {
+  const w = getWorld(req.params.id);
+  w ? res.json(w.getWorldInfo()) : res.status(404).json({ error: 'World not found' });
+});
+
+/** DELETE /voxel/worlds/:id — delete world */
+app.delete('/voxel/worlds/:id', (req, res) => {
+  deleteWorld(req.params.id);
+  res.json({ ok: true });
+});
+
+/** POST /voxel/worlds/:id/save — persist all dirty chunks */
+app.post('/voxel/worlds/:id/save', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  res.json(w.saveAll());
+});
+
+/** POST /voxel/worlds/:id/tick — advance simulation */
+app.post('/voxel/worlds/:id/tick', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const ticks = parseInt(req.body?.ticks ?? '1', 10);
+  const tick  = voxelKernel.tick(w, Math.min(ticks, 100));
+  res.json({ tick, worldId: req.params.id });
+});
+
+/** GET /voxel/worlds/:id/chunk — get chunk data as JSON */
+app.get('/voxel/worlds/:id/chunk', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const cx = parseInt(req.query.cx ?? '0', 10);
+  const cy = parseInt(req.query.cy ?? '0', 10);
+  const cz = parseInt(req.query.cz ?? '0', 10);
+  res.json(w.chunkToJSON(cx, cy, cz));
+});
+
+/** GET /voxel/worlds/:id/chunk/binary — get chunk as raw binary */
+app.get('/voxel/worlds/:id/chunk/binary', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const cx = parseInt(req.query.cx ?? '0', 10);
+  const cy = parseInt(req.query.cy ?? '0', 10);
+  const cz = parseInt(req.query.cz ?? '0', 10);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.send(w.chunkToBinary(cx, cy, cz));
+});
+
+/** POST /voxel/worlds/:id/voxel — set a single voxel */
+app.post('/voxel/worlds/:id/voxel', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const { wx, wy, wz, type, state = 0, metaA = 0, metaB = 0, source = 'api' } = req.body ?? {};
+  if (wx === undefined) return res.status(400).json({ error: 'wx,wy,wz required' });
+  const v   = voxel.pack(type ?? 1, state, metaA, metaB);
+  const old = w.setVoxel(wx, wy, wz, v, source);
+  res.json({ ok: true, wx, wy, wz, v, old });
+});
+
+/** PUT /voxel/worlds/:id/region — fill a region with a voxel type */
+app.put('/voxel/worlds/:id/region', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const { x1, y1, z1, x2, y2, z2, type, state = 0, metaA = 0, source = 'api' } = req.body ?? {};
+  let count = 0;
+  for (let y = Math.min(y1,y2); y <= Math.max(y1,y2); y++) {
+    for (let z = Math.min(z1,z2); z <= Math.max(z1,z2); z++) {
+      for (let x = Math.min(x1,x2); x <= Math.max(x1,x2); x++) {
+        w.setVoxel(x, y, z, voxel.pack(type, state, metaA, 0), source);
+        count++;
+      }
+    }
+  }
+  res.json({ ok: true, count });
+});
+
+/** POST /voxel/worlds/:id/entity — spawn an entity */
+app.post('/voxel/worlds/:id/entity', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const { type, x, y, z, data } = req.body ?? {};
+  res.status(201).json(w.spawnEntity(type ?? 'npc', x ?? 0, y ?? 0, z ?? 0, data ?? {}));
+});
+
+/** GET /voxel/worlds/:id/entities — list all entities */
+app.get('/voxel/worlds/:id/entities', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  res.json([...w.entities.values()]);
+});
+
+/** GET /voxel/worlds/:id/events — SSE real-time event stream (E3) */
+app.get('/voxel/worlds/:id/events', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+
+  res.setHeader('Content-Type',        'text/event-stream');
+  res.setHeader('Cache-Control',       'no-cache');
+  res.setHeader('X-Accel-Buffering',   'no');
+  res.flushHeaders();
+
+  // Replay recent events
+  const since = parseInt(req.query.since ?? '0', 10);
+  for (const evt of w.getEvents(since, 50)) {
+    res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+  }
+
+  const unsub = w.subscribe(evt => {
+    if (!res.writableEnded) res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+  });
+
+  const hb = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+    else clearInterval(hb);
+  }, 20_000);
+
+  req.on('close', () => { unsub(); clearInterval(hb); });
+});
+
+/** POST /voxel/worlds/:id/prompt — compile PROMPT.md into world rules (B3) */
+app.post('/voxel/worlds/:id/prompt', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const { promptMd } = req.body ?? {};
+  if (!promptMd) return res.status(400).json({ error: 'promptMd required' });
+  const rules = w.compilePrompt(promptMd);
+  res.json({ ok: true, rules, worldName: w.name });
+});
+
+/** POST /voxel/worlds/:id/task-region — map a Flow task to a voxel region (B1) */
+app.post('/voxel/worlds/:id/task-region', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const { taskId, cx, cy, cz, radius } = req.body ?? {};
+  if (!taskId) return res.status(400).json({ error: 'taskId required' });
+  const region = w.assignTaskRegion(taskId, { cx, cy, cz, radius });
+  res.status(201).json({ taskId, ...region, worldId: req.params.id });
+});
+
+/** PUT /voxel/worlds/:id/task-region/:taskId/status — update task status in world */
+app.put('/voxel/worlds/:id/task-region/:taskId/status', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  w.updateTaskStatus(req.params.taskId, req.body?.status ?? 'todo');
+  res.json({ ok: true });
+});
+
+/** POST /voxel/worlds/:id/agent-mutate — agent-driven voxel mutation (B2) */
+app.post('/voxel/worlds/:id/agent-mutate', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+
+  const { sessionId, mutations } = req.body ?? {};
+  if (!Array.isArray(mutations)) return res.status(400).json({ error: 'mutations array required' });
+
+  let count = 0;
+  for (const m of mutations.slice(0, 1000)) {  // cap at 1000 per call
+    if (m.type === 'voxel.set') {
+      w.setVoxel(m.wx, m.wy, m.wz,
+        voxel.pack(m.voxelType ?? 1, m.state ?? 0, m.metaA ?? 0, m.metaB ?? 0),
+        `agent:${sessionId ?? 'unknown'}`);
+      count++;
+    } else if (m.type === 'entity.spawn') {
+      w.spawnEntity(m.entityType, m.x, m.y, m.z, m.data ?? {});
+      count++;
+    }
+  }
+
+  res.json({ ok: true, mutations: count, tick: w.tick });
+});
+
+/** GET /voxel/worlds/:id/events/log — full event log (paginated) */
+app.get('/voxel/worlds/:id/events/log', (req, res) => {
+  const w = getWorld(req.params.id);
+  if (!w) return res.status(404).json({ error: 'World not found' });
+  const since = parseInt(req.query.since ?? '0', 10);
+  const limit  = parseInt(req.query.limit ?? '100', 10);
+  res.json(w.getEvents(since, limit));
+});
+
+// ── /vldb/* — VLDB Voxel Layer Database ──────────────────────────────────────
+//
+// Compressed space-event machine.
+// L1=LRU RAM  L2=binary chunks (.bin)  L3=event log (JSONL)
+// All world state derived from delta replays.
+
+/** GET /vldb/config — VLDB constants, material palette, chunk geometry */
+app.get('/vldb/config', (_req, res) => {
+  res.json({
+    chunkSize:  CHUNK_SIZE,
+    chunkVol:   CHUNK_VOL,
+    chunk2Bit:  CHUNK_2BIT,
+    chunk4Bit:  CHUNK_4BIT,
+    materials:  MAT,
+    palette:    [...PALETTE],   // RGBA8 per material
+    kernel:     'JS/WASM-compatible',
+    features:   ['bitpack','rle','lru','delta-log','sse-stream'],
+  });
+});
+
+/** GET /vldb/stats — cache, disk, delta log statistics */
+app.get('/vldb/stats', (_req, res) => res.json(vldb.stats()));
+
+/** GET /vldb/worlds */
+app.get('/vldb/worlds', (_req, res) => res.json(vldb.listWorlds()));
+
+/** POST /vldb/worlds */
+app.post('/vldb/worlds', (req, res) => {
+  try { res.status(201).json(vldb.createWorld(req.body ?? {})); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** DELETE /vldb/worlds/:id */
+app.delete('/vldb/worlds/:id', (req, res) => {
+  vldb.deleteWorld(req.params.id);
+  res.json({ ok: true });
+});
+
+/**
+ * GET /vldb/chunk/:worldId — JSON sparse voxel list
+ * Query: ?cx=0&cy=0&cz=0
+ */
+app.get('/vldb/chunk/:worldId', (req, res) => {
+  const { cx=0, cy=0, cz=0 } = req.query;
+  try {
+    res.json(vldb.getChunkJSON(+cx, +cy, +cz, req.params.worldId));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /vldb/chunk/:worldId/binary — raw bitpacked binary chunk
+ * Returns: Content-Type: application/octet-stream (HEADER+RLE data)
+ */
+app.get('/vldb/chunk/:worldId/binary', (req, res) => {
+  const { cx=0, cy=0, cz=0 } = req.query;
+  try {
+    const buf = vldb.getChunkBinary(+cx, +cy, +cz, req.params.worldId);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', buf.length);
+    res.setHeader('X-VLDB-ChunkSize', CHUNK_SIZE);
+    res.setHeader('X-VLDB-BPP', vldb.bpp);
+    res.send(buf);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /vldb/chunk/:worldId/applyDelta — apply a batch of voxel mutations
+ * Body: { deltas: [{wx,wy,wz,val,mat}], source?: string }
+ */
+app.post('/vldb/chunk/:worldId/applyDelta', (req, res) => {
+  const { deltas, source } = req.body ?? {};
+  if (!Array.isArray(deltas)) return res.status(400).json({ error: 'deltas array required' });
+  try {
+    const applied = vldb.applyDeltaBatch(deltas, req.params.worldId, source ?? 'api');
+    res.json({ ok: true, applied });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /vldb/voxel/:worldId — set a single voxel
+ * Body: { wx, wy, wz, mat, source? }
+ */
+app.post('/vldb/voxel/:worldId', (req, res) => {
+  const { wx, wy, wz, mat, source } = req.body ?? {};
+  if (wx === undefined) return res.status(400).json({ error: 'wx,wy,wz,mat required' });
+  try {
+    const result = vldb.setVoxel(+wx, +wy, +wz, +mat, req.params.worldId, source ?? 'api');
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * PUT /vldb/region/:worldId — fill a box region with a material
+ * Body: { x1,y1,z1, x2,y2,z2, mat, source? }
+ */
+app.put('/vldb/region/:worldId', (req, res) => {
+  const { x1,y1,z1, x2,y2,z2, mat, source='api' } = req.body ?? {};
+  const deltas = [];
+  for (let y=Math.min(y1,y2); y<=Math.max(y1,y2); y++)
+    for (let z=Math.min(z1,z2); z<=Math.max(z1,z2); z++)
+      for (let x=Math.min(x1,x2); x<=Math.max(x1,x2); x++)
+        deltas.push({ wx:x, wy:y, wz:z, val: +mat });
+  try {
+    const applied = vldb.applyDeltaBatch(deltas, req.params.worldId, source);
+    res.json({ ok: true, applied });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /vldb/world/:worldId/state — world info + loaded chunk stats
+ */
+app.get('/vldb/world/:worldId/state', (req, res) => {
+  const world = vldb.getWorld(req.params.worldId);
+  if (!world) return res.status(404).json({ error: 'World not found' });
+  const cache = vldb.cache.keys().filter(k => k.startsWith(req.params.worldId));
+  res.json({ ...world, loadedChunks: cache.length, cacheKeys: cache.slice(0, 20), stats: vldb.stats().cache });
+});
+
+/**
+ * POST /vldb/world/:worldId/flush — flush all dirty chunks to L2
+ */
+app.post('/vldb/world/:worldId/flush', (_req, res) => {
+  const saved = vldb.flushDirtyChunks();
+  res.json({ ok: true, saved });
+});
+
+/**
+ * GET /vldb/world/:worldId/replay — replay delta log for a specific chunk
+ * Query: ?cx=0&cy=0&cz=0
+ */
+app.get('/vldb/world/:worldId/replay', (req, res) => {
+  const { cx=0, cy=0, cz=0 } = req.query;
+  try {
+    const { chunk, deltasApplied } = vldb.replayChunk(+cx, +cy, +cz, req.params.worldId);
+    const sparse = chunk.toSparse();
+    res.json({ cx:+cx, cy:+cy, cz:+cz, deltasApplied, solidCount: sparse.length, voxels: sparse });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * GET /vldb/events — SSE real-time delta stream for all worlds (E3)
+ * Query: ?worldId= (optional filter)
+ */
+app.get('/vldb/events', (req, res) => {
+  const filterWorld = req.query.worldId ?? null;
+
+  res.setHeader('Content-Type',        'text/event-stream');
+  res.setHeader('Cache-Control',       'no-cache');
+  res.setHeader('X-Accel-Buffering',   'no');
+  res.flushHeaders();
+  res.write('event: connected\ndata: {"type":"connected"}\n\n');
+
+  const unsub = vldb.subscribe(evt => {
+    if (filterWorld && evt.worldId !== filterWorld) return;
+    if (!res.writableEnded) {
+      res.write(`event: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`);
+    }
+  });
+
+  const hb = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+    else clearInterval(hb);
+  }, 20_000);
+
+  req.on('close', () => { unsub(); clearInterval(hb); });
+});
+
+/**
+ * GET /vldb/deltas — read event log (L3 source of truth)
+ * Query: ?worldId=&chunkId=&since=<ts>&limit=
+ */
+app.get('/vldb/deltas', (req, res) => {
+  const { since, limit = '200' } = req.query;
+  const deltas = readDeltas({ since: since ? +since : 0 }).slice(-parseInt(limit, 10));
+  res.json({ count: deltas.length, deltas });
+});
+
+/**
+ * POST /vldb/world/:worldId/agent-mutate — agent-driven voxel mutation (bKG integration)
+ * Body: { sessionId, mutations: [{type:'voxel.set', wx,wy,wz,mat}] }
+ */
+app.post('/vldb/world/:worldId/agent-mutate', (req, res) => {
+  const { sessionId, mutations } = req.body ?? {};
+  if (!Array.isArray(mutations)) return res.status(400).json({ error: 'mutations array required' });
+  const deltas = mutations
+    .filter(m => m.type === 'voxel.set')
+    .map(m => ({ wx: m.wx, wy: m.wy, wz: m.wz, val: m.mat ?? MAT.SOLID }));
+  const applied = vldb.applyDeltaBatch(deltas, req.params.worldId, `agent:${sessionId ?? 'unknown'}`);
+  res.json({ ok: true, applied });
 });
 
 // ── /hub/* — bKG Agent Hub (pure Node.js, full feature set) ─────────────────

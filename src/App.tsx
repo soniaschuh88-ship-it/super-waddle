@@ -11,6 +11,7 @@ import { CodeStudio }            from '@/components/CodeStudio/CodeStudio';
 import { AgentHub }              from '@/components/AgentHub/AgentHub';
 import { FlowBoard }             from '@/components/Flow/FlowBoard';
 import { GameWizard }            from '@/components/Game/GameWizard';
+import { VoxelEngine }           from '@/components/Voxel/VoxelEngine';
 import { useAppState }           from '@/context/AppContext';
 
 type HomeView = 'dashboard' | 'tester' | 'settings';
@@ -36,6 +37,7 @@ function StageView() {
     case 'agenthub':  return <AgentHub/>;
     case 'flow':      return <FlowBoard/>;
     case 'game':      return <GameWizard/>;
+    case 'voxel':     return <VoxelEngine/>;
     default:          return (
       <Dashboard
         onTestModel={() => setHomeView('tester')}

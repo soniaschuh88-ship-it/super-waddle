@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Cpu, Server, HardDrive, Plus, Code2, FlaskConical, Key,
   CheckCircle, Loader2, Zap, FolderOpen, ChevronRight,
-  Cloud, Lock, Globe, RefreshCw, Wifi, WifiOff, Sparkles, Gamepad2,
+  Cloud, Lock, Globe, RefreshCw, Wifi, WifiOff, Sparkles, Gamepad2, Layers,
 } from 'lucide-react';
 import { useAppState }           from '@/context/AppContext';
 import { pingRestBackend, ollamaListModels, llamaCppListModels } from '@/lib/llm-client';
@@ -651,6 +651,13 @@ export function Dashboard({
               description="Create a full production-ready game with world, story, NPCs and quests"
               color="#a855f7"
               onClick={() => dispatch({ type: 'SET_STAGE', stage: 'game' })}
+            />
+            <ActionCard
+              icon={Layers}
+              label="Voxel World"
+              description="VLDB engine — compressed voxel worlds, delta replay, WebGL renderer"
+              color="#00e5ff"
+              onClick={() => dispatch({ type: 'SET_STAGE', stage: 'voxel' })}
             />
           </div>
         </section>
