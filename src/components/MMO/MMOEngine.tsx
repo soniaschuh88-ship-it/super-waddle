@@ -23,7 +23,7 @@ import {
   Globe, Users, Shield, Bot,
   Link2, FlaskConical, RefreshCw,
   Wifi, WifiOff, Zap, Activity,
-  Play, Pause, AlertTriangle, Sliders,
+  Play, Pause, AlertTriangle, Sliders, Skull,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ interface DeltaEvent {
   mat?: number; src?: string; ts: number;
 }
 
-type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm' | 'stable';
+type Panel = 'world' | 'peers' | 'authority' | 'npcs' | 'proof' | 'farm' | 'stable' | 'chaos';
 
 const ROLE_COLOR: Record<string, string> = {
   sim:    '#00e5ff',
@@ -252,6 +252,15 @@ export function MMOEngine() {
     bandwidth?:  { totalSent: number; totalDropped: number; mbpsSent: number };
     tick?:       { zones: number; avgDrift: number; corrections: number; fullResyncs: number };
   }>({});
+
+  const [chaosData, setChaosData] = useState<{
+    chaos?:      { scans: number; recovered: number; failed: number; running: boolean; detected: Record<string,number>; trustEvictions: number };
+    speculative?:{ timelines: number; totalConfirmed: number; totalSpeculative: number; totalPatched: number };
+    healer?:     { checksRun: number; corrupted: number; patched: number; regenerated: number; crcMismatches: number };
+    stitcher?:   { prefetches: number; seamsSmoothed: number; bridgesBuilt: number; connectivity?: { components: number; islands: number; bridges: number } };
+    trust?:      Array<{ id: string; score: number; role: string; latency: number }>;
+    history?:    Array<{ type: string; zoneId: string; recovered: boolean; strategy: string|null; ts: number }>;
+  }>({});
   const [npcs,       setNPCs]       = useState<NPC[]>([]);
   const [deltaLog,   setDeltaLog]   = useState<DeltaEvent[]>([]);
   const [loading,    setLoading]    = useState(false);
@@ -325,6 +334,25 @@ export function MMOEngine() {
     } catch { /**/ }
   };
 
+  const loadChaos = async () => {
+    try {
+      const [stats, history] = await Promise.all([
+        api.get<Record<string, unknown>>('/mmo/chaos/stats').catch(() => null),
+        api.get<{ events: unknown[] }>('/mmo/chaos/history?limit=20').catch(() => null),
+      ]);
+      if (stats) {
+        setChaosData({
+          chaos:      stats.chaos      as typeof chaosData.chaos,
+          speculative:stats.speculative as typeof chaosData.speculative,
+          healer:     stats.healer     as typeof chaosData.healer,
+          stitcher:   stats.stitcher   as typeof chaosData.stitcher,
+          trust:      stats.trust      as typeof chaosData.trust,
+          history:    history?.events  as typeof chaosData.history,
+        });
+      }
+    } catch { /**/ }
+  };
+
   useEffect(() => {
     void refresh();
     const iv = setInterval(refresh, 3000);
@@ -336,6 +364,7 @@ export function MMOEngine() {
     if (panel === 'farm')   void loadFarm();
     if (panel === 'npcs')   void loadNPCs();
     if (panel === 'stable') void loadKernel();
+    if (panel === 'chaos')  void loadChaos();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panel]);
 
@@ -387,6 +416,7 @@ export function MMOEngine() {
     { id: 'proof',     label: 'Proof',    Icon: Link2      },
     { id: 'farm',      label: 'Farm',     Icon: FlaskConical},
     { id: 'stable',    label: 'Kernel',   Icon: Sliders     },
+    { id: 'chaos',     label: 'Chaos',    Icon: Skull       },
   ];
 
   const ACCENT = '#00e5ff';
@@ -959,6 +989,168 @@ Fork         → detect on stateHash divergence ±5 ticks
 Bandwidth    → 7 priority queues, 50ms drain cycle, RLE compress
 Tick sync    → NTP-inspired: median(adjusted_ticks) → canonical
               → corrections damped at 50% (fast) / 20% (slow)`}</pre>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Chaos Recovery panel ── */}
+        {panel === 'chaos' && (
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <div className="flex flex-col gap-5 max-w-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-text-primary" style={{ fontFamily:"'Orbitron',sans-serif" }}>
+                    Chaos Recovery Kernel
+                  </h2>
+                  <p className="text-xs text-muted/50 mt-1">
+                    Packet loss · Peer dropout · Latency spikes · Malicious peers · Zone fragmentation
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(chaosData.chaos?.running) && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-success/15 text-success font-bold animate-pulse">ACTIVE</span>
+                  )}
+                  <button onClick={() => void loadChaos()} className="text-muted/40 hover:text-accent transition-colors">
+                    <RefreshCw size={13}/>
+                  </button>
+                </div>
+              </div>
+
+              {/* Overview stats */}
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                <StatItem label="Scans"      value={chaosData.chaos?.scans ?? 0}/>
+                <StatItem label="Recovered"  value={chaosData.chaos?.recovered ?? 0} color="#00e5a0"/>
+                <StatItem label="Failed"     value={chaosData.chaos?.failed ?? 0} color={(chaosData.chaos?.failed ?? 0) > 0 ? '#ff4444' : undefined}/>
+                <StatItem label="Evictions"  value={chaosData.chaos?.trustEvictions ?? 0} color="#ffb300"/>
+              </div>
+
+              {/* Detection breakdown */}
+              {chaosData.chaos?.detected && (
+                <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                  <p className="text-[10px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                    <Skull size={10} className="text-error/60"/>Chaos Events Detected
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {Object.entries(chaosData.chaos.detected).map(([type, count]) => {
+                      const col = count > 0 ? '#ff4444' : '#4a6880';
+                      return (
+                        <div key={type} className="flex flex-col gap-0.5 px-2 py-1.5 rounded-lg border border-border/30">
+                          <p className="text-[9px] uppercase tracking-wider font-bold" style={{ color: col }}>{type.replace('_',' ')}</p>
+                          <p className="text-sm font-bold font-mono tabular-nums" style={{ color: col }}>{count}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Speculative replay */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Zap size={10} className="text-accent/70"/>Speculative Replay (Forward Correction)
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <StatItem label="Timelines"   value={chaosData.speculative?.timelines ?? 0}/>
+                  <StatItem label="Confirmed"   value={chaosData.speculative?.totalConfirmed ?? 0} color="#00e5a0"/>
+                  <StatItem label="Speculative" value={chaosData.speculative?.totalSpeculative ?? 0} color="#ffb300"/>
+                  <StatItem label="Patched"     value={chaosData.speculative?.totalPatched ?? 0} color="#a855f7"/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-1.5">No rollback — patch only diverged voxels forward</p>
+              </div>
+
+              {/* State healer */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Activity size={10} className="text-accent/70"/>State Healer (CRC Validation)
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  <StatItem label="CRC checks"  value={chaosData.healer?.checksRun ?? 0}/>
+                  <StatItem label="Corrupted"   value={chaosData.healer?.corrupted ?? 0} color={(chaosData.healer?.corrupted ?? 0) > 0 ? '#ff4444' : undefined}/>
+                  <StatItem label="Patched"     value={chaosData.healer?.patched ?? 0} color="#00e5a0"/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-1.5">
+                  CRC32 → partial patch → full L3 replay (3 heal levels)
+                </p>
+              </div>
+
+              {/* Zone stitcher */}
+              <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                <p className="text-[11px] font-bold text-text-primary mb-2 flex items-center gap-1.5">
+                  <Globe size={10} className="text-accent/70"/>Zone Stitcher (Predictive)
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <StatItem label="Prefetches"  value={chaosData.stitcher?.prefetches ?? 0}/>
+                  <StatItem label="Seams"       value={chaosData.stitcher?.seamsSmoothed ?? 0}/>
+                  <StatItem label="Bridges"     value={chaosData.stitcher?.bridgesBuilt ?? 0}/>
+                  <StatItem label="Islands"     value={chaosData.stitcher?.connectivity?.islands ?? 0}
+                    color={(chaosData.stitcher?.connectivity?.islands ?? 0) > 0 ? '#ffb300' : undefined}/>
+                </div>
+                <p className="text-[10px] text-muted/40 font-mono mt-1.5">
+                  Movement prediction 3s ahead · boundary smoothing · island bridging
+                </p>
+              </div>
+
+              {/* Trust leaderboard */}
+              {(chaosData.trust?.length ?? 0) > 0 && (
+                <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted/50 mb-2">
+                    Peer Trust Leaderboard
+                  </p>
+                  <div className="flex flex-col gap-1">
+                    {chaosData.trust!.slice(0, 8).map((p, i) => {
+                      const col = p.score > 0.7 ? '#00e5a0' : p.score > 0.4 ? '#ffb300' : '#ff4444';
+                      return (
+                        <div key={p.id} className="flex items-center gap-2 text-[10px] font-mono">
+                          <span className="text-muted/30 w-4">{i+1}.</span>
+                          <span className="text-text-primary/70">{p.id}…</span>
+                          <span className="text-muted/40">{p.role}</span>
+                          <div className="flex-1 h-1 rounded-full bg-border/40 overflow-hidden mx-1">
+                            <div className="h-full rounded-full" style={{ width: `${p.score*100}%`, background: col }}/>
+                          </div>
+                          <span className="font-bold" style={{ color: col }}>{(p.score*100).toFixed(0)}%</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Event history */}
+              {(chaosData.history?.length ?? 0) > 0 && (
+                <div className="rounded-xl border border-border/40 bg-panel/40 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted/50 mb-2">Recent Chaos Events</p>
+                  <div className="flex flex-col gap-1 font-mono text-[10px]">
+                    {chaosData.history!.slice(0, 10).map((evt, i) => (
+                      <div key={i} className="flex items-center gap-2 border-b border-border/10 pb-0.5">
+                        <span className="text-muted/30 flex-shrink-0 w-20">
+                          {new Date(evt.ts).toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+                        </span>
+                        <span className="font-bold" style={{ color: evt.recovered ? '#00e5a0' : '#ff4444' }}>
+                          {evt.type.replace('_',' ')}
+                        </span>
+                        <span className="text-muted/40">{evt.zoneId}</span>
+                        <span className="ml-auto text-muted/30">{evt.strategy ?? '—'}</span>
+                        {evt.recovered
+                          ? <span className="text-success/60 text-[9px]">✓</span>
+                          : <span className="text-error/60 text-[9px]">✗</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Summary */}
+              <div className="rounded-xl border border-border/30 bg-panel/30 p-4 font-mono text-[10px] text-muted/50 leading-relaxed">
+                <p className="text-error/60 font-bold mb-2">Chaos Recovery — Resilience Layer</p>
+                <pre>{`packet_loss   → seq-gap detect → request re-broadcast from trusted peer
+peer_dropout  → authority void  → promote backup, rebalance roles
+latency_spike → throttle bw tier for 10s, auto-restore
+malicious     → trust score < 0.2 → evict peer from registry
+fragmentation → assign idle peer to simulate orphaned zone
+forward merge → patch diverged voxels only, no rollback, no jump
+state heal    → CRC32 → partial patch → L3 event log replay
+zone stitch   → predict 3s ahead → prefetch → seam smooth`}</pre>
               </div>
             </div>
           </div>

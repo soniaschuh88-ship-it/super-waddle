@@ -148,6 +148,11 @@ import { conflictResolver }     from './vsl-conflict-resolver.js';
 import { bandwidthShaper, DeltaCompressor } from './bandwidth-shaper.js';
 import { getTickSync, listTickSyncs, globalTickSyncStats } from './tick-sync.js';
 
+import { ChaosRecoveryKernel, peerTrustScore, CHAOS } from './chaos-recovery.js';
+import { getTimeline, listTimelines, speculativeStats } from './speculative-replay.js';
+import { StateHealer, crc32, ledgerCRC, HEAL_LEVEL_NAME } from './state-healer.js';
+import { ZoneStitcher, analyzeZoneConnectivity }         from './zone-stitcher.js';
+
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
 
@@ -1720,6 +1725,187 @@ app.get('/mmo/ws-info', (_req, res) => {
   });
 });
 
+// ── /mmo/chaos/* — Chaos Recovery Kernel ─────────────────────────────────────
+
+/** GET /mmo/chaos/stats — overall chaos detection + recovery stats */
+app.get('/mmo/chaos/stats', (_req, res) => {
+  res.json({
+    chaos:       chaosKernel.getStats(),
+    speculative: speculativeStats(),
+    healer:      stateHealer.getStats(),
+    stitcher:    zoneStitcher.snapshot(),
+    trust:       chaosKernel.getTrustLeaderboard().slice(0, 10),
+  });
+});
+
+/** GET /mmo/chaos/history — recent chaos events + recoveries */
+app.get('/mmo/chaos/history', (req, res) => {
+  const limit = parseInt(req.query.limit ?? '30', 10);
+  res.json({ events: chaosKernel.getHistory(limit) });
+});
+
+/**
+ * POST /mmo/chaos/track — track a peer event (for chaos detection)
+ * Body: { peerId, event, seq? }
+ */
+app.post('/mmo/chaos/track', (req, res) => {
+  const { peerId, event, seq } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  chaosKernel.trackEvent(peerId, { ...(event ?? {}), seq });
+  res.json({ ok: true });
+});
+
+/**
+ * POST /mmo/chaos/latency — report peer latency measurement
+ * Body: { peerId, latencyMs }
+ */
+app.post('/mmo/chaos/latency', (req, res) => {
+  const { peerId, latencyMs } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  chaosKernel.trackLatency(peerId, +latencyMs || 100);
+  res.json({ ok: true });
+});
+
+/**
+ * POST /mmo/chaos/bad-event — report tampered/invalid event from peer
+ * Body: { peerId, event }
+ */
+app.post('/mmo/chaos/bad-event', (req, res) => {
+  const { peerId, event } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  chaosKernel.reportBadEvent(peerId, event ?? {});
+  res.json({ ok: true, trustScore: chaosKernel._trustScores.get(peerId) ?? 0.8 });
+});
+
+/** GET /mmo/chaos/trust — peer trust leaderboard */
+app.get('/mmo/chaos/trust', (_req, res) => {
+  res.json({ peers: chaosKernel.getTrustLeaderboard() });
+});
+
+// Speculative replay endpoints
+
+/** GET /mmo/chaos/speculative — all active speculative timelines */
+app.get('/mmo/chaos/speculative', (_req, res) => {
+  res.json({ ...speculativeStats(), timelines: listTimelines() });
+});
+
+/**
+ * POST /mmo/chaos/speculative/apply — apply a speculative event
+ * Body: { worldId, zoneId, event, confirmed?: boolean }
+ */
+app.post('/mmo/chaos/speculative/apply', (req, res) => {
+  const { worldId='default', zoneId='0:0:0', event, confirmed=false } = req.body ?? {};
+  if (!event) return res.status(400).json({ error: 'event required' });
+
+  const timeline = getTimeline(worldId, zoneId);
+  const ok = confirmed
+    ? (timeline.applyConfirmed(event), true)
+    : timeline.applySpeculative(event);
+
+  res.json({ ok, zoneId, speculative: timeline.speculative.length, confirmed: timeline.confirmed.length });
+});
+
+/**
+ * POST /mmo/chaos/speculative/correct — apply forward correction
+ * Body: { worldId, zoneId, canonicalMap?: object, atTick }
+ */
+app.post('/mmo/chaos/speculative/correct', (req, res) => {
+  const { worldId='default', zoneId, atTick } = req.body ?? {};
+  if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
+
+  const timeline = getTimeline(worldId, zoneId);
+  const cluster  = defaultMgr.clusters.get(zoneId);
+  const canonical = cluster?.ledger?.voxelMap ?? new Map();
+
+  const result = timeline.forwardCorrect(canonical, +atTick || timeline._currentTick);
+  res.json({ ...result, zoneId });
+});
+
+// State healer endpoints
+
+/** GET /mmo/chaos/healer — state healer stats */
+app.get('/mmo/chaos/healer', (_req, res) => {
+  res.json(stateHealer.getStats());
+});
+
+/**
+ * POST /mmo/chaos/healer/checkpoint — create CRC checkpoint for a zone's ledger
+ * Body: { worldId?, zoneId }
+ */
+app.post('/mmo/chaos/healer/checkpoint', async (req, res) => {
+  const { worldId='default', zoneId } = req.body ?? {};
+  if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
+
+  const cluster = defaultMgr.clusters.get(zoneId);
+  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
+
+  const crc = stateHealer.checkpoint(cluster.ledger);
+  res.json({ ok: true, zoneId, crc });
+});
+
+/**
+ * POST /mmo/chaos/healer/verify — verify a zone's ledger CRC
+ * Body: { worldId?, zoneId }
+ */
+app.post('/mmo/chaos/healer/verify', async (req, res) => {
+  const { worldId='default', zoneId } = req.body ?? {};
+  if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
+
+  const cluster = defaultMgr.clusters.get(zoneId);
+  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
+
+  const result = stateHealer.verify(cluster.ledger);
+  res.json({ zoneId, ...result });
+});
+
+/**
+ * POST /mmo/chaos/healer/heal — trigger healing pipeline for a zone
+ * Body: { worldId?, zoneId }
+ */
+app.post('/mmo/chaos/healer/heal', async (req, res) => {
+  const { worldId='default', zoneId } = req.body ?? {};
+  if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
+
+  const cluster = defaultMgr.clusters.get(zoneId);
+  if (!cluster) return res.status(404).json({ error: 'Zone not found' });
+
+  try {
+    const result = await stateHealer.heal(cluster.ledger, worldId);
+    res.json({ zoneId, ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Zone stitcher endpoints
+
+/** GET /mmo/chaos/stitcher — zone stitcher snapshot */
+app.get('/mmo/chaos/stitcher', (_req, res) => {
+  const connectivity = analyzeZoneConnectivity(defaultMgr.clusters);
+  res.json({ ...zoneStitcher.snapshot(), connectivity });
+});
+
+/**
+ * POST /mmo/chaos/stitcher/track — update peer position for movement prediction
+ * Body: { peerId, wx, wy, wz }
+ */
+app.post('/mmo/chaos/stitcher/track', (req, res) => {
+  const { peerId, wx=0, wy=0, wz=0 } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  zoneStitcher.trackPeer(peerId, +wx, +wy, +wz);
+  const predictedZones = zoneStitcher.tracker.predictZones(peerId);
+  res.json({ ok: true, predictedZones });
+});
+
+/**
+ * GET /mmo/chaos/stitcher/predict/:peerId — get predicted zones for a peer
+ */
+app.get('/mmo/chaos/stitcher/predict/:peerId', (req, res) => {
+  const predicted = zoneStitcher.tracker.predictZones(req.params.peerId);
+  const prefetched = zoneStitcher.prefetchForPeer(req.params.peerId);
+  res.json({ peerId: req.params.peerId, predictedZones: predicted, prefetched });
+});
+
 // ── /mmo/stabilization/* — MMO Stabilization Kernel ─────────────────────────
 
 /** GET /mmo/stabilize/rebalancer — load map + rebalancer metrics */
@@ -2455,6 +2641,13 @@ const httpServer = createServer(app);
 const mmoWss        = attachMMOWebSocket(httpServer, peerRegistry, npcConsensus, proofChain);
 const defaultMgr    = getClusterManager('default');
 const rebalancer    = new ClusterRebalancer(defaultMgr).start();
+
+// ── Chaos Recovery Kernel ──────────────────────────────────────────────────
+const chaosKernel  = new ChaosRecoveryKernel(defaultMgr).start();
+const stateHealer  = new StateHealer(defaultMgr, null);
+const zoneStitcher = new ZoneStitcher(defaultMgr).start();
+stateHealer.start();
+chaosKernel.injectDeps({ bandwidthShaper });
 
 // Start bandwidth shaper — delivers queued messages via WebSocket
 bandwidthShaper.start((peerId, messages) => {
