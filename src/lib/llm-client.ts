@@ -53,6 +53,14 @@ async function restStream(base: string, model: string, msgs: Msg[], onChunk: (c:
 
 const SERVE_BASE = () => window.location.origin;
 
+/** Get caller auth headers — adds bkg user API key if present */
+function cloudHeaders(): Record<string, string> {
+  const h: Record<string, string> = { 'Content-Type': 'application/json' };
+  const key = typeof localStorage !== 'undefined' ? localStorage.getItem('bkg_user_api_key') : null;
+  if (key) h['Authorization'] = `Bearer ${key}`;
+  return h;
+}
+
 /** Parse "providerId/modelId" from a cloud BackendConfig.modelId */
 function parseCloudModel(modelId: string): { providerId: string; model: string } {
   const slash = modelId.indexOf('/');
@@ -67,7 +75,7 @@ async function cloudComplete(
   const { providerId, model } = parseCloudModel(cfg.modelId);
   const r = await fetch(`${SERVE_BASE()}/providers/proxy`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: cloudHeaders(),
     body:    JSON.stringify({ provider: providerId, model, messages: msgs, stream: false, temperature, max_tokens: max }),
   });
   if (!r.ok) {
@@ -85,7 +93,7 @@ async function cloudStream(
   const { providerId, model } = parseCloudModel(cfg.modelId);
   const r = await fetch(`${SERVE_BASE()}/providers/proxy`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: cloudHeaders(),
     body:    JSON.stringify({ provider: providerId, model, messages: msgs, stream: true, temperature, max_tokens: max }),
   });
   if (!r.ok) {

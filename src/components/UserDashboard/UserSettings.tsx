@@ -86,9 +86,30 @@ async function fetchProviderStatus(): Promise<ProviderStatus[]> {
 }
 
 async function saveProviderKeys(keys: Record<string, string>): Promise<boolean> {
+  // If no key in localStorage, auto-register first
+  let authKey = getApiKey();
+  if (!authKey) {
+    try {
+      const reg = await fetch('/api-keys/self-register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'user' }),
+      });
+      if (reg.ok) {
+        const d = await reg.json() as { key: string };
+        if (d.key) {
+          localStorage.setItem('bkg_user_api_key', d.key);
+          authKey = d.key;
+        }
+      }
+    } catch { /**/ }
+  }
+
+  if (!authKey) return false;  // still no key — rate-limited or server down
+
   const r = await fetch('/user/providers', {
     method: 'PUT',
-    headers: { ...makeHeaders(), 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authKey}` },
     body: JSON.stringify(keys),
   });
   return r.ok;
@@ -252,10 +273,13 @@ export function UserSettings({ onClose }: UserSettingsProps) {
     if (ok) {
       setPending({});
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setTimeout(() => setSaved(false), 4000);
       await load();
     } else {
-      setErr('Could not save — check that the bKG server is running');
+      const hasKey = !!getApiKey();
+      setErr(hasKey
+        ? 'Save failed — server may be offline. Retry in a moment.'
+        : 'Could not create account. Too many registrations from this IP. Try again in 1 hour.');
     }
     setSaving(false);
   };
