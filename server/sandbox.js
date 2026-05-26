@@ -12,12 +12,13 @@
 import { spawn }    from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath }  from 'url';
+import { createConnection } from 'net';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
 // Path to the sandbox-agent binary (installed as npm dep)
 const SA_BIN  = join(__dir, 'node_modules', '.bin', 'sandbox-agent');
-const SA_PORT = parseInt(process.env.BKG_SA_PORT  ?? '2468', 10);
+const SA_PORT = parseInt(process.env.BKG_SA_PORT  ?? '7468', 10);
 const SA_HOST = process.env.BKG_SA_HOST           ?? '127.0.0.1';
 const SA_BASE = `http://${SA_HOST}:${SA_PORT}`;
 
@@ -40,13 +41,11 @@ function pushSALog(line) {
  */
 async function isSARunning() {
   return new Promise(resolve => {
-    const net = require('net');
-    const sock = new net.Socket();
+    const sock = createConnection({ port: SA_PORT, host: SA_HOST });
     sock.setTimeout(1000);
     sock.on('connect', () => { sock.destroy(); resolve(true); });
     sock.on('timeout', () => { sock.destroy(); resolve(false); });
     sock.on('error',   () => { sock.destroy(); resolve(false); });
-    sock.connect(SA_PORT, SA_HOST);
   });
 }
 
@@ -67,6 +66,14 @@ export async function startSandboxAgent() {
     '--no-telemetry',
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: '/tmp',             // neutral working dir
+    detached: false,
+    // Pass minimal env — avoids any weird env-var conflicts
+    env: {
+      HOME: process.env.HOME ?? '/root',
+      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+      TMPDIR: '/tmp',
+    },
   });
 
   child.stdout.on('data', d => d.toString().split('\n').forEach(l => l && pushSALog(l)));
