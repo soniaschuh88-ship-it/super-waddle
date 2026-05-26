@@ -10,7 +10,7 @@
  */
 import { type ReactNode, useState, useEffect, useRef } from 'react';
 import {
-  Cpu, X, Settings, LayoutDashboard, Plus, Bot, Zap,
+  Cpu, X, Settings, LayoutDashboard, Plus, Bot, Zap, Gamepad2,
   Menu, ChevronRight, Lock, Cloud,
 } from 'lucide-react';
 import { StageProgress }  from './StageProgress';
@@ -357,6 +357,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             ].join(' ')}
           >
             <Zap size={13}/><span>Flow</span>
+          </button>
+
+          {/* Game Studio */}
+          <button
+            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'game' as import('@/types').Stage })}
+            className={[
+              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
+              state.stage === 'game'
+                ? 'border-amber/30 bg-amber/8 text-amber'
+                : 'text-muted border-transparent hover:text-amber hover:bg-amber/6 hover:border-amber/15',
+            ].join(' ')}
+          >
+            <Gamepad2 size={13}/><span>Game</span>
           </button>
 
           {/* Admin */}

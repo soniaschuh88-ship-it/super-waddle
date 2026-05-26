@@ -1,5 +1,5 @@
 /**
- * server/plugins.js — ICADP Plugin Manager
+ * server/plugins.js — bKG Plugin Manager
  *
  * Installs, lists, and removes pi-compatible packages.
  * Packages can provide:
@@ -31,9 +31,9 @@ import { fileURLToPath } from 'url';
 
 const __dir      = dirname(fileURLToPath(import.meta.url));
 const ICADP_DIR  = join(homedir(), '.bkg');
-const NPM_DIR    = join(ICADP_DIR, 'plugins', 'npm');
+const NPM_DIR    = join(BKG_DIR, 'plugins', 'npm');
 const GIT_DIR    = join(ICADP_DIR, 'plugins', 'git');
-const INDEX_FILE = join(ICADP_DIR, 'plugins', 'index.json');
+const INDEX_FILE = join(BKG_DIR, 'plugins', 'index.json');
 
 for (const d of [NPM_DIR, GIT_DIR]) mkdirSync(d, { recursive: true });
 

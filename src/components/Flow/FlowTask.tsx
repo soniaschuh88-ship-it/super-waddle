@@ -11,10 +11,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, CheckSquare, Square, Plus,
   Zap, MessageSquare, Terminal, BarChart2,
-  Edit3, Save, Loader2, Code2,
+  Edit3, Save, Loader2, Code2, Bot,
   GitBranch, Tag, ArrowRight, CheckCircle2,
 } from 'lucide-react';
 import type { FlowTask } from './FlowBoard';
+import { useAppState } from '@/context/AppContext';
 
 interface Comment {
   id:         string;
@@ -119,7 +120,9 @@ export function FlowTask({
   const [stepDraft,   setStepDraft]   = useState('');
   const [busy,        setBusy]        = useState(false);
   const [planning,    setPlanning]    = useState(false);
+  const [running,     setRunning]     = useState(false);
 
+  const { dispatch } = useAppState();
   const logsRef = useRef<HTMLDivElement>(null);
 
   // ── Load related data ───────────────────────────────────────────────────────
@@ -186,6 +189,49 @@ export function FlowTask({
       setT(updated); onUpdate(updated); setTab('plan');
     }
     setPlanning(false);
+  };
+
+  // E3 — Run task with Agent Hub (creates a Hub session seeded with PROMPT.md)
+  const runWithAgent = async () => {
+    if (!t.prompt_md) {
+      alert('Generate an AI Plan first (Overview tab → Generate AI Plan).');
+      return;
+    }
+    setRunning(true);
+    const userKey = localStorage.getItem('bkg_user_api_key');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (userKey) headers['Authorization'] = `Bearer ${userKey}`;
+
+    try {
+      const r = await fetch('/hub/sessions', {
+        method:  'POST',
+        headers,
+        body: JSON.stringify({
+          id:             `task-${t.id.slice(0, 8)}`,
+          agent:          'pi',
+          agentMode:      'default',
+          initialMessage: `You are executing the following development plan. Read it carefully and start implementing:\n\n${t.prompt_md}`,
+          cwd:            undefined,   // Hub creates workspace automatically
+        }),
+      });
+      if (r.ok) {
+        const session = await r.json() as { id: string };
+        // Link session to task
+        await fetch(`/flow/tasks/${t.id}`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json', ...(userKey ? { Authorization: `Bearer ${userKey}` } : {}) },
+          body: JSON.stringify({ agent_session: session.id, status: 'in-progress' as const }),
+        });
+        const updated = await fetch(`/flow/tasks/${t.id}`).then(r => r.json()) as FlowTask;
+        setT(updated); onUpdate(updated);
+        // Navigate to Agent Hub
+        dispatch({ type: 'SET_STAGE', stage: 'agenthub' });
+        onClose();
+      }
+    } catch (e) {
+      console.error('runWithAgent failed:', e);
+    }
+    setRunning(false);
   };
 
   const addComment = async () => {
@@ -381,7 +427,7 @@ export function FlowTask({
               </div>
 
               {/* AI Plan button */}
-              <button onClick={planWithAI} disabled={planning}
+              <button onClick={planWithAI} disabled={planning || running}
                 className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border text-sm font-semibold transition-all cursor-pointer"
                 style={{
                   background:  planning ? 'rgba(0,229,255,0.04)' : 'rgba(0,229,255,0.08)',
@@ -390,8 +436,28 @@ export function FlowTask({
                   boxShadow:   planning ? undefined : '0 0 12px rgba(0,229,255,0.08)',
                 }}>
                 {planning ? <Loader2 size={14} className="animate-spin"/> : <Zap size={14}/>}
-                {planning ? 'Generating Plan…' : 'Generate AI Plan (PROMPT.md)'}
+                {planning ? 'Generating Plan…' : t.prompt_md ? 'Regenerate AI Plan' : 'Generate AI Plan (PROMPT.md)'}
               </button>
+
+              {/* E3 — Run with Agent Hub */}
+              <button onClick={runWithAgent} disabled={running || planning}
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border text-sm font-semibold transition-all cursor-pointer"
+                style={{
+                  background:  running ? 'rgba(168,85,247,0.04)' : t.prompt_md ? 'rgba(168,85,247,0.1)' : 'rgba(13,42,64,0.5)',
+                  borderColor: t.prompt_md ? 'rgba(168,85,247,0.35)' : 'rgba(13,42,64,0.6)',
+                  color:       t.prompt_md ? '#a855f7' : '#4a6880',
+                  boxShadow:   t.prompt_md && !running ? '0 0 12px rgba(168,85,247,0.1)' : undefined,
+                }}>
+                {running ? <Loader2 size={14} className="animate-spin"/> : <Bot size={14}/>}
+                {running ? 'Starting Agent…' : t.agent_session ? `Resume Agent Session` : 'Run with Agent Hub'}
+              </button>
+
+              {/* Show agent session ID if linked */}
+              {t.agent_session && (
+                <p className="text-[11px] font-mono text-muted/50 flex items-center gap-1.5">
+                  <Bot size={10}/>Session: {t.agent_session}
+                </p>
+              )}
             </div>
           )}
 

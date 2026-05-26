@@ -92,7 +92,15 @@ import {
   listSecrets, setSecret, deleteSecret,
   getEvals, createEval,
   getBoardData, buildPlanningPrompt, savePlanMd,
+  subscribeBoardEvents,
+  checkAndIncrRateLimit,
 } from './bkg-flow.js';
+
+import {
+  GAME_GENRES, GAME_TONES, GAME_ENGINES,
+  buildWorldPrompt, buildStoryPrompt, buildNPCsPrompt, buildQuestsPrompt,
+  buildGamePlanPrompt, emptyGameDesign, assembleGamePromptMd,
+} from './bkg-game.js';
 
 import {
   PROVIDERS, getProvider, providersByTier, resolveProviderKey, fetchProviderModels,
@@ -178,8 +186,14 @@ function stopOllama() { if (!state.ollama.proc || state.ollama.proc.killed) retu
 // ── Express app ───────────────────────────────────────────────────────────────
 
 const app = express();
-app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type'] }));
+app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'] }));
 app.use(express.json({ limit: '8mb' }));
+
+// A4 — Request ID tracing: every response gets X-Request-Id
+app.use((_req, res, next) => {
+  res.setHeader('X-Request-Id', randomBytes(8).toString('hex'));
+  next();
+});
 
 // ── /api/* — model server manager ────────────────────────────────────────────
 
@@ -342,29 +356,27 @@ app.put('/api-keys/:id/enabled', (req, res) => {
  * Key scope is 'inference' (can use models + plan generator).
  * Body: { name?: string }
  */
-const _selfRegCounts = new Map();   // ip → [timestamp, count]
-
 app.post('/api-keys/self-register', (req, res) => {
-  const ip    = req.ip ?? 'unknown';
-  const now   = Date.now();
-  const [ts, cnt] = _selfRegCounts.get(ip) ?? [now, 0];
-  const window = 60 * 60 * 1000;  // 1 hour
+  const ip = req.ip ?? 'unknown';
 
-  // Reset counter if outside window
-  const count = (now - ts) < window ? cnt : 0;
-  if (count >= 3) {
-    return res.status(429).json({ error: 'Too many self-registrations. Try again later.' });
+  // E7 — Persistent rate limit via SQLite (survives server restarts)
+  const rl = checkAndIncrRateLimit(`selfReg:${ip}`);
+  if (!rl.allowed) {
+    return res.status(429).json({
+      error: `Too many self-registrations. Try again in ${rl.resetIn ?? 60} minutes.`,
+      code:  'RATE_LIMITED',
+    });
   }
-  _selfRegCounts.set(ip, [ts, count + 1]);
 
   const { name } = req.body ?? {};
   // Give self-registered users 'agent' scope so they can use both inference + agent routes
   const { key, stored } = createApiKey(name || 'user', 'agent');
   res.status(201).json({
     key,
-    id:     stored.id,
-    scope:  stored.scope,
-    warning: 'Store this key in your browser — it will not be shown again.',
+    id:        stored.id,
+    scope:     stored.scope,
+    remaining: rl.remaining,
+    warning:   'Store this key in your browser — it will not be shown again.',
   });
 });
 
@@ -702,6 +714,46 @@ app.delete('/flow/projects/:id', (req, res) => { archiveProject(req.params.id); 
 
 app.get('/flow/board/:projectId', (req, res) => res.json(getBoardData(req.params.projectId)));
 
+/**
+ * GET /flow/events?projectId=  — SSE stream of real-time board events (E1)
+ *
+ * Event types pushed to the browser:
+ *   task.created  — new task in project
+ *   task.updated  — status/title/priority changed
+ *   task.deleted  — task removed
+ *   board.reload  — client should re-fetch full board
+ */
+app.get('/flow/events', (req, res) => {
+  const projectId = req.query.projectId ?? 'default';
+
+  res.setHeader('Content-Type',        'text/event-stream');
+  res.setHeader('Cache-Control',       'no-cache');
+  res.setHeader('Connection',          'keep-alive');
+  res.setHeader('X-Accel-Buffering',   'no');
+  res.flushHeaders();
+
+  // Send an initial snapshot event so the client knows the stream is live
+  res.write(`event: connected\ndata: ${JSON.stringify({ projectId, ts: Date.now() })}\n\n`);
+
+  // Subscribe to live board mutations
+  const unsub = subscribeBoardEvents(projectId, (event) => {
+    if (!res.writableEnded) {
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+  });
+
+  // Heartbeat every 20 s to keep the connection alive through proxies
+  const hb = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+    else clearInterval(hb);
+  }, 20_000);
+
+  req.on('close', () => {
+    unsub();
+    clearInterval(hb);
+  });
+});
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 app.get('/flow/tasks', (req, res) => {
@@ -739,10 +791,46 @@ app.delete('/flow/tasks/:id', (req, res) => {
 /** POST /flow/tasks/:id/move — change status + reorder
  *  Body: { status: string, index?: number }
  */
-app.post('/flow/tasks/:id/move', (req, res) => {
+app.post('/flow/tasks/:id/move', async (req, res) => {
   const { status, index } = req.body ?? {};
   if (!status) return res.status(400).json({ error: 'status required' });
-  res.json(moveTask(req.params.id, status, index ?? null));
+
+  const updated = moveTask(req.params.id, status, index ?? null);
+  if (!updated) return res.status(404).json({ error: 'Task not found' });
+
+  // E4 — Create git branch when task starts (in-progress)
+  if (status === 'in-progress') {
+    const project = getProject(updated.project_id);
+    const branchName = `flow/${updated.id}`;
+    if (project?.path && existsSync(project.path)) {
+      try {
+        const { execSync } = await import('child_process');
+        execSync(`git -C "${project.path}" checkout -b "${branchName}" 2>/dev/null || true`, { timeout: 5000 });
+        appendLog(updated.id, `✓ Git branch created: ${branchName}`, 'info');
+      } catch {
+        appendLog(updated.id, `Git branch skipped (no git repo at project path)`, 'warn');
+      }
+    }
+    // E17 — Mission autopilot: check if milestone is complete
+    if (updated.milestone_id) {
+      const remaining = listTasks(updated.project_id, { missionId: updated.mission_id })
+        .filter(t => t.milestone_id === updated.milestone_id && !['done','archived'].includes(t.status));
+      if (remaining.length === 0) {
+        appendLog(updated.id, `🎉 Milestone complete!`, 'info');
+      }
+    }
+  }
+
+  // E17 — Mission autopilot on done
+  if (status === 'done' && updated.milestone_id) {
+    const remaining = listTasks(updated.project_id, { missionId: updated.mission_id })
+      .filter(t => t.milestone_id === updated.milestone_id && !['done','archived'].includes(t.status));
+    if (remaining.length === 0) {
+      appendLog(updated.id, `🎉 All tasks in milestone done — milestone complete!`, 'info');
+    }
+  }
+
+  res.json(updated);
 });
 
 // ── AI Task Planning ──────────────────────────────────────────────────────────
@@ -912,6 +1000,140 @@ app.post('/flow/tasks/:id/evals', (req, res) => {
   const { score, evidence } = req.body ?? {};
   if (score === undefined) return res.status(400).json({ error: 'score required' });
   res.status(201).json(createEval(req.params.id, parseFloat(score), evidence ?? {}));
+});
+
+// ── /game/* — bKG Game Creation System ──────────────────────────────────────
+
+/** GET /game/config — genres, tones, engines */
+app.get('/game/config', (_req, res) => {
+  res.json({ genres: GAME_GENRES, tones: GAME_TONES, engines: GAME_ENGINES });
+});
+
+/** GET /game/empty — empty game design document */
+app.get('/game/empty', (_req, res) => res.json(emptyGameDesign()));
+
+/**
+ * Helper: call AI proxy and return generated text.
+ * Used by all game design generation endpoints.
+ */
+async function callAI(systemPrompt, userPrompt, req) {
+  const providerId = req.body?.providerId ?? 'groq';
+  const model      = req.body?.model ?? 'llama-3.3-70b-versatile';
+  const keyId      = getCallerKeyId(req);
+  const { key }    = resolveKeyForUser(providerId, keyId ?? '');
+
+  if (!key) {
+    // Return a minimal template if no provider key
+    return `# Generated Document\n\n*No AI provider configured. Configure a provider in Settings to generate rich content.*\n\n${userPrompt}`;
+  }
+
+  const fetch  = (await import('node-fetch')).default;
+  const p      = getProvider(providerId);
+  if (!p) throw new Error(`Unknown provider: ${providerId}`);
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (key !== 'anon') headers['Authorization'] = `Bearer ${key}`;
+
+  let res;
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    res = await fetch(`${p.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+        stream:     false,
+        max_tokens: 3000,
+        temperature: 0.7,
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (res.status !== 429 || attempt === 2) break;
+    const retryAfter = parseInt(res.headers.get('retry-after') ?? '2', 10);
+    await new Promise(r => setTimeout(r, Math.min(retryAfter, 10) * 1000));
+  }
+
+  if (!res.ok) throw new Error(`Provider ${res.status}`);
+  const d = await res.json();
+  return d.choices?.[0]?.message?.content ?? '';
+}
+
+/** POST /game/generate/world — generate WORLD.md from world design data */
+app.post('/game/generate/world', async (req, res) => {
+  try {
+    const { system, user } = buildWorldPrompt(req.body ?? {});
+    const text = await callAI(system, user, req);
+    res.json({ doc: text });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /game/generate/story — generate STORY.md */
+app.post('/game/generate/story', async (req, res) => {
+  try {
+    const { system, user } = buildStoryPrompt(req.body?.story ?? {}, req.body?.world ?? {});
+    const text = await callAI(system, user, req);
+    res.json({ doc: text });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /game/generate/npcs — generate NPCS.md */
+app.post('/game/generate/npcs', async (req, res) => {
+  try {
+    const { system, user } = buildNPCsPrompt(req.body?.npcs ?? {}, req.body?.world ?? {}, req.body?.story ?? {});
+    const text = await callAI(system, user, req);
+    res.json({ doc: text });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /game/generate/quests — generate QUESTS.md */
+app.post('/game/generate/quests', async (req, res) => {
+  try {
+    const { system, user } = buildQuestsPrompt(req.body?.quests ?? {}, req.body?.world ?? {}, req.body?.story ?? {});
+    const text = await callAI(system, user, req);
+    res.json({ doc: text });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/** POST /game/generate/gameplan — generate full GAMEPLAN.md + PROMPT.md */
+app.post('/game/generate/gameplan', async (req, res) => {
+  try {
+    const { system, user } = buildGamePlanPrompt(req.body ?? {});
+    const text = await callAI(system, user, req);
+    res.json({ doc: text });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/**
+ * POST /game/create-task — assemble all game docs into a Flow task
+ * Body: { design: GameDesign, projectId?: string }
+ * Returns the created task with prompt_md containing all game documents.
+ */
+app.post('/game/create-task', (req, res) => {
+  try {
+    const { design, projectId = 'default' } = req.body ?? {};
+    if (!design) return res.status(400).json({ error: 'design required' });
+
+    const promptMd = assembleGamePromptMd(design);
+    const task     = createTask({
+      title:       `🎮 ${design.world?.title || 'Untitled Game'}`,
+      description: `${design.world?.genre || 'Game'} · ${design.world?.tone || ''} · ${design.engine?.label || 'Godot 4'}`,
+      status:      'todo',
+      projectId,
+      promptMd,
+      labels:      ['game', design.world?.genre || 'rpg', design.engine?.id || 'godot4'],
+      metadata:    { gameDesign: design, mode: 'game' },
+    });
+
+    // Write all game docs to task logs for reference
+    appendLog(task.id, `Game project created: ${task.title}`, 'info');
+    appendLog(task.id, `Engine: ${design.engine?.label || 'Godot 4'} · Genre: ${design.world?.genre || 'rpg'}`, 'info');
+    if (design.docs?.world)   appendLog(task.id, 'WORLD.md generated', 'info');
+    if (design.docs?.story)   appendLog(task.id, 'STORY.md generated', 'info');
+    if (design.docs?.npcs)    appendLog(task.id, 'NPCS.md generated',  'info');
+    if (design.docs?.quests)  appendLog(task.id, 'QUESTS.md generated','info');
+
+    res.status(201).json(task);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── /hub/* — bKG Agent Hub (pure Node.js, full feature set) ─────────────────
@@ -1178,12 +1400,19 @@ app.post('/providers/proxy', async (req, res) => {
       headers['X-Title'] = 'bKG';
     }
 
-    const upstreamRes = await fetch(`${p.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, messages, stream, max_tokens, temperature }),
-      signal: AbortSignal.timeout(60000),
-    });
+    // E11 — Retry on 429 with Retry-After (max 2 retries)
+    let upstreamRes;
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      upstreamRes = await fetch(`${p.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model, messages, stream, max_tokens, temperature }),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (upstreamRes.status !== 429 || attempt === 2) break;
+      const retryAfter = parseInt(upstreamRes.headers.get('retry-after') ?? '2', 10);
+      await new Promise(r => setTimeout(r, Math.min(retryAfter, 10) * 1000));
+    }
 
     if (!upstreamRes.ok) {
       const text = await upstreamRes.text().catch(() => `${upstreamRes.status}`);
@@ -1312,7 +1541,7 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', pid: process.pid, uptime: Math.round(process.uptime()), port: PORT });
 });
 
-/** GET /health/ready — readiness probe (used by icadp.sh to confirm server is up) */
+/** GET /health/ready — readiness probe (used by bkg.sh to confirm server is up) */
 app.get('/health/ready', (_req, res) => {
   if (_ready) res.json({ ready: true, pid: process.pid });
   else        res.status(503).json({ ready: false });
@@ -1325,7 +1554,7 @@ app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-// Write PID file so icadp.sh can track and kill us reliably
+// Write PID file so bkg.sh can track and kill us reliably
 const PID_DIR  = join(__dir, '../.bkg/run');
 const PID_FILE = join(PID_DIR, 'serve.pid');
 

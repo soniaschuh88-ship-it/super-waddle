@@ -1,11 +1,11 @@
 /**
- * server/manager.js — ICADP Process Manager
+ * server/manager.js — bKG Process Manager
  *
  * Lightweight HTTP server that starts / stops the two model servers:
  *   • node-llama-cpp inference server  (server/index.js, default port 8001)
  *   • Ollama                            (ollama serve, default port 11434)
  *
- * Runs on port 4001 by default.  The ICADP admin panel connects to it.
+ * Runs on port 4001 by default.  The bKG admin panel connects to it.
  *
  * Usage:
  *   cd server && node manager.js
@@ -233,7 +233,7 @@ WantedBy=multi-user.target`,
 app.listen(MANAGER_PORT, MANAGER_HOST, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║      ICADP Process Manager  v1.0                     ║
+║      bKG Process Manager  v1.0                     ║
 ╠══════════════════════════════════════════════════════╣
 ║  Manager : http://${MANAGER_HOST}:${MANAGER_PORT}               
 ║  Controls: llama-cpp (port ${LLAMA_PORT}), ollama (port ${OLLAMA_PORT})

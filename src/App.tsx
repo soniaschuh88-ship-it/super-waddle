@@ -10,6 +10,7 @@ import { DualPaneExplorer }      from '@/components/Stufe2/DualPaneExplorer';
 import { CodeStudio }            from '@/components/CodeStudio/CodeStudio';
 import { AgentHub }              from '@/components/AgentHub/AgentHub';
 import { FlowBoard }             from '@/components/Flow/FlowBoard';
+import { GameWizard }            from '@/components/Game/GameWizard';
 import { useAppState }           from '@/context/AppContext';
 
 type HomeView = 'dashboard' | 'tester' | 'settings';
@@ -17,12 +18,6 @@ type HomeView = 'dashboard' | 'tester' | 'settings';
 function StageView() {
   const { state }               = useAppState();
   const [homeView, setHomeView] = useState<HomeView>('dashboard');
-
-  // Reset home sub-view when leaving the home stage
-  const prev = state.stage;
-  if (prev !== 'home' && homeView !== 'dashboard') {
-    /* will re-render on next visit */
-  }
 
   switch (state.stage) {
     case 'home':
@@ -40,6 +35,7 @@ function StageView() {
     case 'stufe3':    return <CodeStudio/>;
     case 'agenthub':  return <AgentHub/>;
     case 'flow':      return <FlowBoard/>;
+    case 'game':      return <GameWizard/>;
     default:          return (
       <Dashboard
         onTestModel={() => setHomeView('tester')}
@@ -50,12 +46,10 @@ function StageView() {
 }
 
 export default function App() {
-  // Show onboarding overlay if user hasn't set up their API key yet
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return !localStorage.getItem('bkg_user_api_key');
   });
 
-  // Also listen for a manual "show onboarding" event from Dashboard
   useEffect(() => {
     const handler = () => setShowOnboarding(true);
     window.addEventListener('bkg:show-onboarding', handler);

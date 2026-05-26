@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Cpu, Server, HardDrive, Plus, Code2, FlaskConical, Key,
   CheckCircle, Loader2, Zap, FolderOpen, ChevronRight,
-  Cloud, Lock, Globe, RefreshCw, Wifi, WifiOff, Sparkles,
+  Cloud, Lock, Globe, RefreshCw, Wifi, WifiOff, Sparkles, Gamepad2,
 } from 'lucide-react';
 import { useAppState }           from '@/context/AppContext';
 import { pingRestBackend, ollamaListModels, llamaCppListModels } from '@/lib/llm-client';
@@ -621,6 +621,13 @@ export function Dashboard({
               description={isPrivate ? 'View local backend status' : 'Configure free provider API keys'}
               color="#ffb300"
               onClick={() => onOpenSettings?.()}
+            />
+            <ActionCard
+              icon={Gamepad2}
+              label="Game Studio"
+              description="Create a full production-ready game with world, story, NPCs and quests"
+              color="#a855f7"
+              onClick={() => dispatch({ type: 'SET_STAGE', stage: 'game' })}
             />
           </div>
         </section>

@@ -42,6 +42,25 @@ mkdirSync(BKG_DIR, { recursive: true });
 const db = new Database(DB_PATH, { verbose: null });
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
+db.pragma('synchronous = NORMAL');   // Good balance for WAL mode
+
+// A1 — WAL checkpoint every 5 minutes to prevent unbounded WAL growth
+setInterval(() => {
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /**/ }
+}, 5 * 60 * 1000).unref();
+
+// A5 — Integrity check at startup (non-blocking, logs result)
+setImmediate(() => {
+  try {
+    const result = db.pragma('integrity_check');
+    const ok     = result?.[0]?.integrity_check === 'ok';
+    if (!ok) {
+      console.error('[bkg-flow] ⚠️  SQLite integrity check FAILED:', result);
+    }
+  } catch (e) {
+    console.error('[bkg-flow] integrity check error:', e.message);
+  }
+});
 
 // ── Schema migrations ─────────────────────────────────────────────────────────
 
@@ -176,6 +195,13 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 
+  -- E7: Persistent rate-limit counters (survive server restart)
+  CREATE TABLE IF NOT EXISTS rate_limits (
+    ip           TEXT PRIMARY KEY,
+    count        INTEGER DEFAULT 0,
+    window_start INTEGER NOT NULL
+  );
+
   CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
     id, title, description, prompt_md,
     content='tasks', content_rowid='rowid',
@@ -289,6 +315,30 @@ export function getTask(id) {
   return taskRow(db.prepare('SELECT * FROM tasks WHERE id=?').get(id));
 }
 
+// ── Board SSE pub/sub (E1 — real-time updates) ────────────────────────────────
+
+/** Map<projectId, Set<fn>> — live browser sessions subscribed to board events */
+const _boardSubscribers = new Map();
+
+/**
+ * Subscribe to board events for a project.
+ * @param {string} projectId
+ * @param {function} fn  called with { type, task, taskId }
+ * @returns {function} unsubscribe
+ */
+export function subscribeBoardEvents(projectId, fn) {
+  if (!_boardSubscribers.has(projectId)) _boardSubscribers.set(projectId, new Set());
+  _boardSubscribers.get(projectId).add(fn);
+  return () => _boardSubscribers.get(projectId)?.delete(fn);
+}
+
+/** Publish a board event to all subscribers for a project */
+function emitBoard(projectId, type, task) {
+  _boardSubscribers.get(projectId)?.forEach(fn => {
+    try { fn({ type, task }); } catch { /**/ }
+  });
+}
+
 export function createTask(data) {
   const id = uid();
   const projectId = data.projectId ?? data.project_id ?? 'default';
@@ -317,7 +367,9 @@ export function createTask(data) {
     JSON.stringify(data.metadata ?? {}),
   );
   activityLog(projectId, id, 'task.created', { title: data.title });
-  return getTask(id);
+  const created = getTask(id);
+  emitBoard(projectId, 'task.created', created);
+  return created;
 }
 
 export function updateTask(id, data) {
@@ -345,12 +397,15 @@ export function updateTask(id, data) {
 
   db.prepare(`UPDATE tasks SET ${cols.map(c => `${c}=?`).join(',')}, updated_at=? WHERE id=?`)
     .run(...values, now(), id);
-  return getTask(id);
+  const updated = getTask(id);
+  if (updated) emitBoard(updated.project_id, 'task.updated', updated);
+  return updated;
 }
 
 export function deleteTask(id) {
   const t = getTask(id);
   if (!t) return false;
+  emitBoard(t.project_id, 'task.deleted', { id, project_id: t.project_id, title: t.title });
   db.prepare('DELETE FROM tasks WHERE id=?').run(id);
   activityLog(t.project_id, id, 'task.deleted', { title: t.title });
   return true;
@@ -661,6 +716,35 @@ export function savePlanMd(taskId, promptMd) {
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
+
+// ── E7: Persistent rate limiting ─────────────────────────────────────────────
+
+const RATE_WINDOW = 60 * 60 * 1000; // 1 hour in ms
+const RATE_LIMIT  = 3;
+
+export function checkAndIncrRateLimit(ip) {
+  const now  = Date.now();
+  const row  = db.prepare('SELECT count, window_start FROM rate_limits WHERE ip=?').get(ip);
+
+  if (!row) {
+    db.prepare('INSERT INTO rate_limits (ip, count, window_start) VALUES (?,?,?)').run(ip, 1, now);
+    return { allowed: true, remaining: RATE_LIMIT - 1 };
+  }
+
+  // Reset if window expired
+  if (now - row.window_start >= RATE_WINDOW) {
+    db.prepare('UPDATE rate_limits SET count=1, window_start=? WHERE ip=?').run(now, ip);
+    return { allowed: true, remaining: RATE_LIMIT - 1 };
+  }
+
+  if (row.count >= RATE_LIMIT) {
+    const resetIn = Math.ceil((row.window_start + RATE_WINDOW - now) / 60000);
+    return { allowed: false, remaining: 0, resetIn };
+  }
+
+  db.prepare('UPDATE rate_limits SET count=count+1 WHERE ip=?').run(ip);
+  return { allowed: true, remaining: RATE_LIMIT - row.count - 1 };
+}
 
 export function flowHealth() {
   const taskCount    = db.prepare("SELECT COUNT(*) AS c FROM tasks WHERE status!='archived'").get().c;

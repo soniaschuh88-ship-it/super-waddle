@@ -1,7 +1,7 @@
 /**
  * server/agent.js — bKG Coding Agent Engine
  *
- * Uses @earendil-works/pi-coding-agent as the agent harness, rebranded for ICADP.
+ * Uses @earendil-works/pi-coding-agent as the agent harness, rebranded for bKG.
  * Registers our local model servers (node-llama-cpp and Ollama) as custom providers,
  * so pi's full tool system (read/write/edit/bash/grep/find/ls) and extension API
  * work with any locally-running GGUF or Ollama model.
@@ -95,15 +95,15 @@ async function buildModelRegistry(settings) {
   const authStorage  = AuthStorage.create(join(ICADP_DIR, 'auth.json'));
   const modelRegistry = ModelRegistry.create(authStorage, join(ICADP_DIR, 'models.json'));
 
-  // Register our local server as the 'icadp' provider
-  await modelRegistry.registerProvider('icadp', {
+  // Register our local server as the 'bkg' provider
+  await modelRegistry.registerProvider('bkg', {
     api:     'openai-completions',
     baseUrl: settings.serverUrl,
-    apiKey:  'ICADP_LOCAL_KEY',         // env var name — we'll set a fake key
+    apiKey:  'BKG_LOCAL_KEY',         // env var name — we'll set a fake key
     models: [
       {
         id:            settings.modelId || 'local',
-        name:          `ICADP Local (${settings.backendType})`,
+        name:          `bKG Local (${settings.backendType})`,
         reasoning:     false,
         input:         ['text'],
         cost:          { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -114,9 +114,9 @@ async function buildModelRegistry(settings) {
   });
 
   // Provide a dummy API key so pi doesn't complain about missing auth
-  authStorage.setRuntimeApiKey('icadp', 'local-no-auth');
+  authStorage.setRuntimeApiKey('bkg', 'local-no-auth');
   // Set env var so the provider can pick it up
-  process.env['ICADP_LOCAL_KEY'] = 'local-no-auth';
+  process.env['BKG_LOCAL_KEY'] = 'local-no-auth';
 
   return { authStorage, modelRegistry };
 }
@@ -147,11 +147,11 @@ export async function startSession(options = {}) {
   const sysPrefix= options.systemPrompt ?? settings.systemPromptPrefix;
 
   const { authStorage, modelRegistry } = await buildModelRegistry(settings);
-  const model = modelRegistry.find('icadp', settings.modelId || 'local');
+  const model = modelRegistry.find('bkg', settings.modelId || 'local');
 
   if (!model) {
     throw new Error(
-      `Cannot find ICADP local model. Is the ${settings.backendType} server running at ${settings.serverUrl}?`,
+      `Cannot find bKG local model. Is the ${settings.backendType} server running at ${settings.serverUrl}?`,
     );
   }
 
@@ -161,7 +161,7 @@ export async function startSession(options = {}) {
     agentDir:                ICADP_DIR,
     additionalExtensionPaths: [],
     extensionFactories: [
-      // Inline ICADP branding extension
+      // Inline bKG branding extension
       (pi) => {
         pi.on('before_agent_start', async () => {
           // No-op; system prompt prefix handled below

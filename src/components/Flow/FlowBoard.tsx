@@ -41,6 +41,7 @@ export interface FlowTask {
   order_index:   number;
   branch:        string;
   prompt_md:     string;
+  agent_session: string;
   labels:        string[];
   dependencyIds: string[];
   created_at:    number;
@@ -274,6 +275,50 @@ export function FlowBoard() {
   }, []);
 
   useEffect(() => { void loadBoard(); void loadProjects(); }, [loadBoard, loadProjects]);
+
+  // ── E1: Real-time SSE board subscription ────────────────────────────────────
+
+  useEffect(() => {
+    if (searchResults !== null) return; // don't refresh while searching
+    const es = new EventSource(`/flow/events?projectId=${projectId}`);
+
+    const merge = (task: FlowTask, type: string) => {
+      setBoard(prev => {
+        if (!prev) return prev;
+        if (type === 'task.deleted') {
+          return {
+            ...prev,
+            columns: prev.columns.map(col => ({
+              ...col,
+              tasks: col.tasks.filter(t => t.id !== task.id),
+            })),
+          };
+        }
+        // task.created or task.updated — remove from old column, insert in new
+        const filtered = prev.columns.map(col => ({
+          ...col,
+          tasks: col.tasks.filter(t => t.id !== task.id),
+        }));
+        return {
+          ...prev,
+          columns: filtered.map(col => col.id === task.status
+            ? { ...col, tasks: [...col.tasks, task].sort((a, b) => a.order_index - b.order_index) }
+            : col,
+          ),
+          totals: { ...prev.totals, [task.status]: (prev.totals[task.status] ?? 0) + 1 },
+        };
+      });
+    };
+
+    es.addEventListener('task.created', (e) => merge(JSON.parse(e.data).task, 'task.created'));
+    es.addEventListener('task.updated', (e) => merge(JSON.parse(e.data).task, 'task.updated'));
+    es.addEventListener('task.deleted', (e) => merge(JSON.parse(e.data).task, 'task.deleted'));
+    es.addEventListener('board.reload',  ()  => void loadBoard());
+    es.onerror = () => { /* auto-reconnects */ };
+
+    return () => es.close();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, searchResults]);
 
   // ── Search ──────────────────────────────────────────────────────────────────
 

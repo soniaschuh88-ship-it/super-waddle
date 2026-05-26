@@ -1,7 +1,7 @@
 // bKG – Core Type Definitions
 
-/** The seven top-level stages. */
-export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3' | 'agenthub' | 'flow';
+/** The eight top-level stages. */
+export type Stage = 'home' | 'stufe1' | 'stufe1_5' | 'stufe2' | 'stufe3' | 'agenthub' | 'flow' | 'game';
 export type Stufe1Step = 'idea' | 'features' | 'generating';
 export type EngineStatus = 'idle' | 'loading' | 'ready' | 'generating' | 'error';
 /** Inference backend selection.
