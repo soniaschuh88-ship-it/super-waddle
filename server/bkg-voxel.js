@@ -818,5 +818,6 @@ export class BKGVoxelKernel {
 }
 
 export const kernel = new BKGVoxelKernel();
-// Try to load WASM kernel on startup
-kernel.loadWASM(join(__dirname ?? process.cwd(), 'bkg-voxel-kernel.wasm')).catch(() => {});
+// Try to load WASM kernel on startup (async, non-blocking)
+const _kernelDir = new URL('.', import.meta.url).pathname;
+kernel.loadWASM(join(_kernelDir, 'bkg-voxel-kernel.wasm')).catch(() => {});
