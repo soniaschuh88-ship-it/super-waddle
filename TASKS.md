@@ -5,92 +5,49 @@
 
 ---
 
-## 🔴 Current Sprint
+## ✅ Sprint Completed
 
-### E1 — Real-time SSE Board Updates
-Push task status changes to all open browser tabs via SSE.
-`bkg-flow.js` → emit on `updateTask()` · `serve.js` → `GET /flow/events` · `FlowBoard.tsx` → subscribe
+All original sprint items are shipped. Checked off below:
 
-### E3 — Flow → Agent Execution Bridge
-"Run with Agent" button on FlowTask creates a Hub session seeded with PROMPT.md.
-`FlowTask.tsx` + `App.tsx` — closes the Plan → Execute loop.
-
-### E4 — Git Branch Per Task
-Auto-create `flow/<task-id>` branch when task moves to `in-progress`.
-`serve.js` task-move endpoint.
-
-### A1 — WAL Checkpointing
-`setInterval(() => db.pragma('wal_checkpoint(TRUNCATE)'), 300_000)` in `bkg-flow.js`.
-
-### A3 — Structured Error Responses
-All errors: `{ error, code, details? }` with machine-readable `code` values.
-
-### A4 — Request ID Tracing
-`X-Request-Id` header on every response. Log alongside errors.
-
-### A5 — DB Integrity Check
-`PRAGMA integrity_check` at startup. Log + activity-feed alert on failure.
-
-### E7 — Rate Limit SQLite Persistence
-Replace in-memory `_selfRegCounts` Map with `rate_limits` SQLite table.
-
-### E11 — Provider 429 Retry
-Retry with `Retry-After` delay (max 2 retries) in `/providers/proxy`.
+| ID | Feature | Status | Notes |
+|----|---------|--------|-------|
+| E1 | SSE Real-time Board Updates | ✅ Done | `GET /flow/events`, FlowBoard subscribes via EventSource |
+| E2 | Drag-and-drop board reorder | ✅ Done | `draggable` + `onDrop` in FlowBoard |
+| E3 | Flow → Agent Execution Bridge | ✅ Done | "Run with Agent" in FlowTask, creates Hub session |
+| E4 | Git Branch Per Task | ✅ Done | `flow/<task-id>` on move to in-progress |
+| E5 | Column +N today stats | ✅ Done | `todayCount` in board columns |
+| E6 | Provider key health-check | ✅ Done | `POST /providers/:id/test` |
+| E7 | Rate Limit SQLite Persistence | ✅ Done | `checkAndIncrRateLimit()` uses SQLite table |
+| E8 | Task labels UI | ✅ Done | `LabelsEditor` component in FlowTask |
+| E9 | API key chip in Dashboard | ✅ Done | `UserKeyChip` component in Dashboard |
+| E10 | Board keyboard shortcuts | ✅ Done | `N` new task · `/` focus search · `Esc` close |
+| E11 | Provider 429 Retry | ✅ Done | `Retry-After` retry loop in `/providers/proxy` |
+| E14 | Flow export (MD/CSV) | ✅ Done | `GET /flow/export/:projectId?format=` |
+| E15 | Install missing agents | ✅ Done | `POST /hub/agents/:id/install` |
+| E17 | Mission autopilot | ✅ Done | Auto-advance milestone on task done |
+| E18 | Webhook triggers | ✅ Done | `POST /flow/webhook/:projectId` |
+| A1 | WAL Checkpointing | ✅ Done | `setInterval wal_checkpoint(TRUNCATE)` in bkg-flow.js |
+| A3 | Structured Error Responses | ✅ Done | `apiErr()` helper + global error handler middleware |
+| A4 | Request ID Tracing | ✅ Done | `X-Request-Id` on every response |
+| A5 | DB Integrity Check | ✅ Done | `PRAGMA integrity_check` in `setImmediate` at startup |
+| G1–G7 | Game Creation System | ✅ Done | Full blueprint wizard, MMO panel, game client, world builder |
+| E16 | Mobile bottom tab nav | ✅ Done | 5-item fixed bottom nav bar on mobile (`sm:hidden`) |
 
 ---
 
-## 🎮 Game Creation System
+## 🔴 Active Sprint
 
-bKG must support full production-ready game development, not just apps.
+### E12 — Hub shell history tab
+Filter agent session events to show only terminal/exec output in a dedicated tab.
+`AgentHub.tsx` → new "Terminal" tab showing only `exec`/`shell` type events.
 
-### G1 — Game Project Mode
-New wizard mode: **Game** (alongside existing App mode).
-Adds game-specific planning stages before PROMPT.md generation.
+### A2 — Session JSONL compression
+Gzip session event logs older than 24h to reduce disk usage.
+`server/serve.js` → nightly `setInterval` to compress JSONL files.
 
-### G2 — World Creation Planner
-Interactive form:
-- World name, genre, tone (dark fantasy / sci-fi / cozy / etc.)
-- Geography: continents, biomes, cities, factions
-- Lore: history, magic system / technology, rules of the world
-- Exports to `WORLD.md` stored in task + workspace
-
-### G3 — Story Creation Planner
-- Acts structure (3-act, 5-act, hero's journey, non-linear)
-- Main narrative arc + subplots
-- Protagonist / antagonist definition
-- Key story beats with chapter outline
-- Exports to `STORY.md`
-
-### G4 — NPC Creator
-- NPC template: name, role, faction, personality traits, backstory
-- Dialogue tree skeleton (YAML or JSON)
-- Behavioral flags: hostile / friendly / neutral / merchant / questgiver
-- Voice / visual description for asset generation prompts
-- Exports to `NPCS.md` + `npcs.json`
-
-### G5 — Quest Creator
-- Quest type: main / side / procedural / hidden
-- Objectives list (kill / collect / escort / discover / build)
-- Prerequisites (other quest IDs, NPC states, world flags)
-- Rewards: XP / items / reputation / story unlock
-- Failure conditions
-- Exports to `QUESTS.md` + `quests.json`
-
-### G6 — Game Technical Plan Generator
-AI generates a full `PROMPT.md` for game execution covering:
-- Tech stack selection (Godot / Unity / Phaser / custom engine)
-- Entity component system design
-- Asset pipeline plan
-- Save/load system design
-- Physics + collision layer setup
-- Audio system design
-- Exports `GAMEPLAN.md`
-
-### G7 — Agent Game Coding Pipeline
-Enhanced Agent Hub session type for games:
-- Seeded with WORLD.md + STORY.md + NPCS.md + QUESTS.md + GAMEPLAN.md
-- Tools: `write_scene`, `write_npc`, `write_quest`, `write_shader`, `run_tests`
-- Progress tracked in Flow task workflow steps
+### E13 — Light theme toggle
+CSS variable swap for a light `#f8f9fa` base theme.
+`AppShell.tsx` + `index.css` → toggle via localStorage.
 
 ---
 
@@ -98,24 +55,16 @@ Enhanced Agent Hub session type for games:
 
 | ID | Feature | Effort | Notes |
 |----|---------|--------|-------|
-| E2 | Drag-and-drop board reorder | M | HTML5 DnD |
-| E5 | Column +N today stats | M | SQL from activity table |
-| E6 | Provider key health-check | S | POST /providers/:id/test |
-| E8 | Task labels UI | S | FlowTask.tsx |
-| E9 | API key chip in Dashboard | S | GET /user/profile |
-| E10 | Board keyboard shortcuts | M | N / / Esc J K → Enter |
-| E12 | Hub shell history tab | S | filter terminal events |
-| E14 | Flow export (MD/CSV) | S | GET /flow/export/:id |
-| E15 | Install missing agents | S | Hub UI + POST /hub/agents/:id/install |
-| E16 | Mobile bottom tab nav | M | AppShell.tsx |
-| E17 | Mission autopilot | S | serve.js task-move hook |
-| E18 | Webhook triggers | M | POST /flow/webhook/:projectId |
+| E20 | Provider model search/filter | S | Filter the 100+ NVIDIA models by name |
+| E21 | Flow board swimlanes | M | Group tasks by assignee or milestone |
+| E22 | Task time-tracking | M | Start/stop timer per task |
+| E23 | Voxel world screenshot | S | Canvas `toDataURL()` → download |
+| E24 | Blueprint AI batch generate | M | Generate all 8 sections in one click |
+| E25 | MMO player statistics | M | Real-time player count per zone |
 | M1 | Event replay mode | L | JSONL timeline scrubber |
-| M2 | Agent memory layer | L | /flow/tasks/:id/memory |
-| M3 | Conflict detection engine | L | file collision detection |
-| M4 | Execution cost layer | M | token tracking per task |
-| A2 | Session JSONL compression | S | gzip sessions > 24h |
-| E13 | Light theme toggle | M | CSS vars swap |
+| M2 | Agent memory layer | L | `/flow/tasks/:id/memory` |
+| M3 | Conflict detection engine | L | File collision detection |
+| M4 | Execution cost layer | M | Token tracking per task |
 
 ---
 
@@ -124,7 +73,6 @@ Enhanced Agent Hub session type for games:
 | ID | Issue | Severity |
 |----|-------|----------|
 | K2 | Ghost sandbox-agent processes on dev ports 2468–2470 | Low |
-| K3 | Rate limit counter resets on server restart → E7 fixes this | Low |
 | K7 | Pi event poll 300ms fixed, may miss burst events | Low |
 | K9 | Very long task titles overflow at 320px | Cosmetic |
 
@@ -141,28 +89,28 @@ Enhanced Agent Hub session type for games:
 - Providers = inference layer
 - Git = isolation layer
 
-All layers must show a **single coherent chain** in the UI, not 3 separate tools.
+All layers show a **single coherent chain** in the UI, not separate tools.
 
 ---
 
-## Core Loop (target state)
+## Core Loop (current state)
 
 ```
 [New Idea]
     ↓
-[Flow: Create Task]  ← World/Story/NPC/Quest planners (Game mode)
+[Flow: Create Task]         ← N shortcut · webhook · game wizard
     ↓
-[AI: Generate PROMPT.md]  ← via /providers/proxy
+[AI: Generate PROMPT.md]   ← /providers/proxy streaming
     ↓
-[Flow → Agent: "Run with Agent"]  ← E3
+[Flow → Agent: "Run"]      ← E3: Hub session seeded with plan
     ↓
-[Hub: Execute in workspace]
+[Hub: Execute]             ← Pi / Claude Code / Codex / Amp
     ↓
-[FS: Committed to flow/<task-id>]  ← E4
+[FS: flow/<task-id> branch]← E4: git checkout -b
     ↓
-[Eval: Score + evidence]
+[Eval: Score + evidence]   ← task evals (0-100)
     ↓
-[Flow: Update task → done]  ← SSE push ← E1
+[Flow: SSE push → done]    ← E1: live update to all open tabs
     ↓
 [Repeat or Archive]
 ```

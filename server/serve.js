@@ -303,6 +303,14 @@ app.use((_req, res, next) => {
   next();
 });
 
+// A3 — Structured error helper: use instead of res.status(N).json({ error: '...' })
+// Emits:  { error: message, code: 'SNAKE_CASE', details?: any }
+function apiErr(res, status, code, message, details) {
+  const body = { error: message, code };
+  if (details !== undefined) body.details = details;
+  return res.status(status).json(body);
+}
+
 // ── /api/* — model server manager ────────────────────────────────────────────
 
 // ── /auth/* — admin authentication (bcrypt + HMAC token) ─────────────────────
@@ -3203,6 +3211,26 @@ app.get('/health/ready', (_req, res) => {
 
 app.use(express.static(DIST, { maxAge: 0 }));
 app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
+
+// ── A3: Global error handler — structured { error, code, details } ────────────
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err, req, res, _next) => {
+  const status  = err.status ?? err.statusCode ?? 500;
+  const code    = err.code   ?? (status === 400 ? 'BAD_REQUEST'
+                              : status === 401 ? 'UNAUTHORIZED'
+                              : status === 403 ? 'FORBIDDEN'
+                              : status === 404 ? 'NOT_FOUND'
+                              : 'INTERNAL_ERROR');
+  const message = err.message ?? 'An unexpected error occurred';
+  const reqId   = res.getHeader('X-Request-Id') ?? '';
+
+  if (status >= 500) {
+    console.error(`[serve] ${status} ${code} ${req.method} ${req.path} reqId=${reqId}:`, err);
+  }
+
+  res.status(status).json({ error: message, code, ...(err.details ? { details: err.details } : {}) });
+});
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 

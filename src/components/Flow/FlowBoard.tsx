@@ -361,7 +361,50 @@ export function FlowBoard() {
     }, 300);
   }, [query, projectId]);
 
-  // ── Create task ────────────────────────────────────────────────────────────
+  // ── E10: Keyboard shortcuts ─────────────────────────────────────────────────
+  // N → open new task form   /  → focus search   Esc → close panel / clear search
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Don't trigger when typing inside any input/textarea
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+        // Esc still works inside inputs
+        if (e.key === 'Escape') {
+          setCreating(false);
+          setNewTitle('');
+          setNewDesc('');
+          setQuery('');
+          (e.target as HTMLElement).blur();
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'n':
+        case 'N':
+          e.preventDefault();
+          setCreating(true);
+          break;
+
+        case '/':
+          e.preventDefault();
+          searchInputRef.current?.focus();
+          searchInputRef.current?.select();
+          break;
+
+        case 'Escape':
+          if (creating) { setCreating(false); setNewTitle(''); setNewDesc(''); }
+          if (query)    setQuery('');
+          break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creating, query]);
 
   const createTask = async () => {
     if (!newTitle.trim()) return;
@@ -480,8 +523,8 @@ export function FlowBoard() {
         <div className="flex items-center gap-1.5 flex-1 max-w-64 bg-base/70 border border-border/50 rounded-xl px-2.5 py-1.5 focus-within:border-accent/40 transition-colors">
           {searchBusy ? <Loader2 size={12} className="text-muted/50 animate-spin flex-shrink-0"/>
             : <Search size={12} className="text-muted/50 flex-shrink-0"/>}
-          <input value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Search tasks…"
+          <input ref={searchInputRef} value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search tasks…  (/)"
             className="flex-1 bg-transparent text-xs text-text-primary placeholder:text-muted/30 focus:outline-none"/>
           {query && <button onClick={() => setQuery('')} className="text-muted/30 hover:text-muted text-xs">✕</button>}
         </div>
