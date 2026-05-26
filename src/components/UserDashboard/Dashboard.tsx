@@ -13,7 +13,7 @@
 import { useState, useEffect } from 'react';
 import {
   Cpu, Server, HardDrive,
-  Plus, Code2, FlaskConical,
+  Plus, Code2, FlaskConical, Key,
   CheckCircle, XCircle, Loader2, Zap,
   FolderOpen, ChevronRight, BarChart2,
 } from 'lucide-react';
@@ -216,7 +216,13 @@ function StatsStrip({ total, today }: { total: number; today: number }) {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
-export function Dashboard({ onTestModel }: { onTestModel?: () => void }) {
+export function Dashboard({
+  onTestModel,
+  onOpenSettings,
+}: {
+  onTestModel?:    () => void;
+  onOpenSettings?: () => void;
+}) {
   const { state, dispatch } = useAppState();
   const { backendConfig }   = state;
 
@@ -399,6 +405,12 @@ export function Dashboard({ onTestModel }: { onTestModel?: () => void }) {
             label="Test Models"
             description="Chat with any available model to verify it's working correctly"
             onClick={() => onTestModel?.()}
+          />
+          <ActionCard
+            icon={Key}
+            label="My Provider Keys"
+            description="Set API keys for Groq, NVIDIA, OpenRouter and other free providers"
+            onClick={() => onOpenSettings?.()}
           />
         </div>
       </section>

@@ -72,6 +72,17 @@ import {
   proxyToSandboxAgent,
 } from './sandbox.js';
 
+import {
+  PROVIDERS, getProvider, providersByTier, resolveProviderKey, fetchProviderModels,
+} from './providers.js';
+
+import {
+  getUser, ensureUser, listUsers, createUser,
+  getUserProviderKeys, setUserProviderKeys, markOnboarded,
+  getGlobalProviderConfig, setGlobalProviderConfig, getGlobalProviderKeys,
+  getUserProviderStatus, resolveKeyForUser,
+} from './users.js';
+
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
 
@@ -302,6 +313,38 @@ app.put('/api-keys/:id/enabled', (req, res) => {
 });
 
 /** GET /api-keys/scopes — list valid scopes */
+/**
+ * POST /api-keys/self-register
+ * No-auth self-registration: creates a bKG API key for a new local user.
+ * Rate-limited to 3 keys per hour per IP (simple counter).
+ * Key scope is 'inference' (can use models + plan generator).
+ * Body: { name?: string }
+ */
+const _selfRegCounts = new Map();   // ip → [timestamp, count]
+
+app.post('/api-keys/self-register', (req, res) => {
+  const ip    = req.ip ?? 'unknown';
+  const now   = Date.now();
+  const [ts, cnt] = _selfRegCounts.get(ip) ?? [now, 0];
+  const window = 60 * 60 * 1000;  // 1 hour
+
+  // Reset counter if outside window
+  const count = (now - ts) < window ? cnt : 0;
+  if (count >= 3) {
+    return res.status(429).json({ error: 'Too many self-registrations. Try again later.' });
+  }
+  _selfRegCounts.set(ip, [ts, count + 1]);
+
+  const { name } = req.body ?? {};
+  const { key, stored } = createApiKey(name || 'user', 'inference');
+  res.status(201).json({
+    key,
+    id:     stored.id,
+    scope:  stored.scope,
+    warning: 'Store this key in your browser — it will not be shown again.',
+  });
+});
+
 app.get('/api-keys/scopes', (_req, res) => {
   res.json({
     scopes: SCOPES.map(s => ({
@@ -545,6 +588,134 @@ app.put('/settings', (req, res) => {
 });
 
 // ── Static file serving (SPA) ─────────────────────────────────────────────────
+
+// ── /providers/* — bKG provider registry ─────────────────────────────────────
+
+/**
+ * Helper: extract the calling user's key ID from their Bearer token.
+ * Returns the keyId string if the request has a valid API key, else null.
+ * Admin JWT tokens are treated as "admin" user.
+ */
+function getCallerKeyId(req) {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+  if (!token) return null;
+
+  // Admin JWT → special "admin" user
+  if (verifyToken(token)) return 'admin';
+
+  // API key
+  const k = validateApiKey(token);
+  return k ? k.id : null;
+}
+
+/** GET /providers/list — all providers with per-user status */
+app.get('/providers/list', (req, res) => {
+  const keyId = getCallerKeyId(req);
+  const status = getUserProviderStatus(keyId ?? '');
+  const groups = providersByTier();
+  res.json({ providers: status, groups: { free: groups.free.map(p=>p.id), freemium: groups.freemium.map(p=>p.id), dynamic: groups.dynamic.map(p=>p.id), paid: groups.paid.map(p=>p.id) } });
+});
+
+/** GET /providers/:id/models — list models from a provider (with resolved key) */
+app.get('/providers/:id/models', async (req, res) => {
+  const keyId  = getCallerKeyId(req);
+  const { key } = resolveKeyForUser(req.params.id, keyId ?? '');
+  const p = getProvider(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Unknown provider' });
+
+  const models = await fetchProviderModels(req.params.id, key);
+  res.json({ provider: req.params.id, models, count: models.length });
+});
+
+// ── /user/* — per-user settings ───────────────────────────────────────────────
+
+/** GET /user/providers — get calling user's provider key status (no values) */
+app.get('/user/providers', (req, res) => {
+  const keyId = getCallerKeyId(req);
+  if (!keyId) return res.status(401).json({ error: 'Authentication required' });
+  res.json(getUserProviderStatus(keyId));
+});
+
+/** PUT /user/providers — set/update provider keys for the calling user */
+app.put('/user/providers', (req, res) => {
+  const keyId = getCallerKeyId(req);
+  if (!keyId) return res.status(401).json({ error: 'Authentication required' });
+  const updates = req.body ?? {};
+  const result  = setUserProviderKeys(keyId, updates);
+  // Return updated status (no key values)
+  res.json({ ok: true, configured: Object.keys(result).length });
+});
+
+/** POST /user/onboarded — mark user as having completed onboarding */
+app.post('/user/onboarded', (req, res) => {
+  const keyId = getCallerKeyId(req);
+  if (!keyId) return res.status(401).json({ error: 'Authentication required' });
+  markOnboarded(keyId);
+  res.json({ ok: true });
+});
+
+/** GET /user/profile — get user profile + onboarding status */
+app.get('/user/profile', (req, res) => {
+  const keyId = getCallerKeyId(req);
+  if (!keyId) return res.status(401).json({ error: 'Authentication required' });
+  const user = getUser(keyId) ?? { keyId, onboarded: false, createdAt: null };
+  res.json({ keyId: user.keyId, name: user.name, onboarded: user.onboarded, createdAt: user.createdAt });
+});
+
+// ── /admin/globals — admin global provider config ─────────────────────────────
+
+function requireAdminSession(req, res) {
+  const auth  = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : req.query.token;
+  if (!token || !verifyToken(token)) {
+    res.status(401).json({ error: 'Admin session required' });
+    return false;
+  }
+  return true;
+}
+
+/** GET /admin/globals — get global provider config */
+app.get('/admin/globals', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const cfg = getGlobalProviderConfig();
+  // Mask key values — only show whether each key is set
+  const masked = {};
+  for (const [k, v] of Object.entries(cfg.providerKeys ?? {})) {
+    masked[k] = v ? '••••••••' : '';
+  }
+  res.json({ ...cfg, providerKeys: masked });
+});
+
+/** PUT /admin/globals — update global provider config */
+app.put('/admin/globals', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const updated = setGlobalProviderConfig(req.body ?? {});
+  res.json({ ok: true, updatedAt: updated.updatedAt });
+});
+
+/** POST /admin/globals/providers — set individual provider key values */
+app.post('/admin/globals/providers', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const { providerKeys } = req.body ?? {};
+  if (!providerKeys) return res.status(400).json({ error: 'providerKeys required' });
+  const updated = setGlobalProviderConfig({ providerKeys });
+  res.json({ ok: true, updatedAt: updated.updatedAt });
+});
+
+/** POST /admin/user — create a new user (returns raw API key) */
+app.post('/admin/user', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  const { name } = req.body ?? {};
+  const result = createUser(name || 'user');
+  res.status(201).json({ ...result.user, rawKey: result.rawKey, warning: 'Store this key securely.' });
+});
+
+/** GET /admin/users — list all user profiles */
+app.get('/admin/users', (req, res) => {
+  if (!requireAdminSession(req, res)) return;
+  res.json(listUsers());
+});
 
 // ── Readiness + health endpoints (must be before static/SPA catch-all) ───────
 

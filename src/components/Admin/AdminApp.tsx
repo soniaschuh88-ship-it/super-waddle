@@ -3,7 +3,7 @@
  * Top-level admin dashboard — password gate + tabbed sections.
  */
 import { useState, useEffect } from 'react';
-import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download, Bot, Puzzle, Key } from 'lucide-react';
+import { Cpu, BarChart2, HardDrive, Settings, LogOut, Server, Box, Power, FlaskConical, Download, Bot, Puzzle, Key, Globe } from 'lucide-react';
 import { AdminAuth, logout, verifyStoredToken, getToken } from './AdminAuth';
 import { OllamaManager }       from './OllamaManager';
 import { NodeLlamaCppManager } from './NodeLlamaCppManager';
@@ -16,13 +16,15 @@ import { ModelDownloadPanel }  from './ModelDownloadPanel';
 import { AgentSettings }       from './AgentSettings';
 import { PluginManager }       from './PluginManager';
 import { ApiKeys }             from './ApiKeys';
+import { GlobalProviders }     from './GlobalProviders';
 import { useAppState }         from '@/context/AppContext';
 
-type Tab = 'agent' | 'apikeys' | 'plugins' | 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+type Tab = 'agent' | 'apikeys' | 'globals' | 'plugins' | 'servers' | 'models' | 'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
 
 const TABS: { id: Tab; label: string; icon: React.FC<{size?:number;className?:string}> }[] = [
   { id:'agent',      label:'Agent Settings',    icon:Bot          },
   { id:'apikeys',    label:'API Keys',           icon:Key          },
+  { id:'globals',    label:'Global Providers',  icon:Globe        },
   { id:'plugins',    label:'Plugins',           icon:Puzzle       },
   { id:'servers',    label:'Server Manager',    icon:Power        },
   { id:'models',     label:'Download Models',   icon:Download     },
@@ -102,6 +104,7 @@ export function AdminApp() {
             </div>
             {tab === 'agent'      && <AgentSettings/>}
             {tab === 'apikeys'    && <ApiKeys/>}
+            {tab === 'globals'    && <GlobalProviders/>}
             {tab === 'plugins'    && <PluginManager/>}
             {tab === 'servers'    && <ServerManager/>}
             {tab === 'models'     && (
