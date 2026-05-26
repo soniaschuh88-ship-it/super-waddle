@@ -197,54 +197,220 @@ function LocalModelCard({
 // ── Cloud provider chip ───────────────────────────────────────────────────────
 
 const TIER_BADGE: Record<string, { label: string; cls: string }> = {
-  free:     { label: '✅ Free',     cls: 'bg-success/10 text-success/80 border-success/20' },
-  freemium: { label: '🔄 Freemium', cls: 'bg-accent/10 text-accent/80 border-accent/20' },
-  dynamic:  { label: '🔧 Key',      cls: 'bg-info/10 text-blue-400/80 border-info/20' },
-  paid:     { label: '💳 Paid',     cls: 'bg-amber/10 text-amber/80 border-amber/20' },
+  free:     { label: 'Free',     cls: 'bg-success/10 text-success/80 border-success/20' },
+  freemium: { label: 'Freemium', cls: 'bg-accent/10 text-accent/80 border-accent/20' },
+  dynamic:  { label: 'Key req.', cls: 'bg-info/10 text-blue-400/80 border-info/20' },
+  paid:     { label: 'Paid',     cls: 'bg-amber/10 text-amber/80 border-amber/20' },
 };
 
-function CloudProviderCard({
-  provider,
-  onConfigure,
+// ── Full-featured Cloud Panel ─────────────────────────────────────────────────
+
+function CloudPanel({
+  providers,
+  onManageKeys,
+  dispatch,
 }: {
-  provider:    CloudProviderStatus;
-  onConfigure: () => void;
+  providers:    CloudProviderStatus[];
+  onManageKeys: () => void;
+  dispatch:     (a: import('@/types').AppAction) => void;
 }) {
-  const badge = TIER_BADGE[provider.tier] ?? TIER_BADGE.free;
-  const isKey = provider.source === 'user';
-  const isGlobal = provider.source === 'global' || provider.source === 'env';
-  const isFree = provider.source === 'anon';
+  const [selectedId,    setSelectedId]    = useState(() =>
+    localStorage.getItem('bkg_cloud_provider') ?? '',
+  );
+  const [models,        setModels]        = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState(() =>
+    localStorage.getItem('bkg_cloud_model') ?? '',
+  );
+  const [fetchingModels,setFetchingModels]= useState(false);
+  const [testing,       setTesting]       = useState(false);
+  const [testResult,    setTestResult]    = useState<'ok'|'fail'|null>(null);
+  const [testReply,     setTestReply]     = useState('');
+
+  // Fetch models when provider changes
+  useEffect(() => {
+    if (!selectedId) { setModels([]); return; }
+    setFetchingModels(true);
+    const headers: Record<string, string> = {};
+    const k = localStorage.getItem('bkg_user_api_key');
+    if (k) headers['Authorization'] = `Bearer ${k}`;
+
+    fetch(`/providers/${selectedId}/models`, { headers })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: unknown) => {
+        if (!d) { setModels([]); return; }
+        const data = d as { models?: Array<{ id: string }> };
+        const list = (data.models ?? []).map((m) => m.id).slice(0, 30);
+        setModels(list);
+        // Auto-select first model if none selected
+        if (list.length > 0 && (!selectedModel || !list.includes(selectedModel))) {
+          setSelectedModel(list[0]);
+          localStorage.setItem('bkg_cloud_model', list[0]);
+        }
+      })
+      .catch(() => setModels([]))
+      .finally(() => setFetchingModels(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  const selectProvider = (id: string) => {
+    setSelectedId(id);
+    setModels([]);
+    setTestResult(null);
+    setTestReply('');
+    localStorage.setItem('bkg_cloud_provider', id);
+  };
+
+  const selectModel = (m: string) => {
+    setSelectedModel(m);
+    localStorage.setItem('bkg_cloud_model', m);
+  };
+
+  const activateBackend = () => {
+    if (!selectedId || !selectedModel) return;
+    dispatch({
+      type:   'SET_BACKEND',
+      config: { type: 'cloud', serverUrl: '', modelId: `${selectedId}/${selectedModel}`, providerId: selectedId },
+    });
+    localStorage.setItem('bkg_mode', 'cloud');
+  };
+
+  const testModel = async () => {
+    if (!selectedId || !selectedModel) return;
+    setTesting(true); setTestResult(null); setTestReply('');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const k = localStorage.getItem('bkg_user_api_key');
+    if (k) headers['Authorization'] = `Bearer ${k}`;
+
+    try {
+      const r = await fetch('/providers/proxy', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          provider:   selectedId,
+          model:      selectedModel,
+          messages:   [{ role: 'user', content: 'Reply with exactly two words: WORKS GREAT' }],
+          stream:     false,
+          max_tokens: 15,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.ok) {
+        const d = await r.json() as { choices: Array<{ message: { content: string } }> };
+        const reply = d.choices?.[0]?.message?.content ?? '';
+        setTestReply(reply);
+        setTestResult('ok');
+      } else {
+        const e = await r.json().catch(() => ({})) as { error?: string };
+        setTestReply(e.error ?? `${r.status}`);
+        setTestResult('fail');
+      }
+    } catch (e) {
+      setTestReply(e instanceof Error ? e.message : 'timeout');
+      setTestResult('fail');
+    }
+    setTesting(false);
+  };
+
+  const curProvider = providers.find(p => p.id === selectedId);
+  const accessibleProviders = providers.filter(p => p.hasKey);
+  const displayProviders    = providers.filter(p => p.hasKey || p.source === 'anon' || p.tier === 'free');
 
   return (
-    <div
-      className={[
-        'relative flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all',
-        provider.hasKey
-          ? 'border-success/20 bg-success/3'
-          : 'border-border/40 bg-panel/50',
-      ].join(' ')}
-      style={provider.hasKey ? { background: 'rgba(0,229,160,0.03)' } : undefined}
-    >
-      <div className={[
-        'w-2 h-2 rounded-full flex-shrink-0',
-        isFree ? 'bg-success animate-pulse'
-        : isKey || isGlobal ? 'bg-success'
-        : 'bg-border',
-      ].join(' ')}/>
+    <div className="rounded-2xl border border-border/50 bg-panel/40 p-4 flex flex-col gap-4">
 
-      <span className="flex-1 text-xs font-semibold text-text-primary truncate">{provider.name}</span>
-
-      <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium flex-shrink-0 ${badge.cls}`}>
-        {badge.label}
-      </span>
-
-      {!provider.hasKey && !isFree && (
-        <button
-          onClick={onConfigure}
-          className="text-[10px] text-accent/60 hover:text-accent transition-colors flex-shrink-0"
-        >
-          Add key
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs text-muted/70">
+          <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"/>
+          {accessibleProviders.length} configured · {providers.filter(p=>p.source==='anon').length} free
+        </div>
+        <button onClick={onManageKeys}
+          className="text-[11px] text-accent/70 hover:text-accent flex items-center gap-1 transition-colors">
+          <Key size={10}/>Manage Keys
         </button>
+      </div>
+
+      {/* Provider grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-1.5">
+        {displayProviders.map(p => {
+          const isSelected = p.id === selectedId;
+          const available  = p.hasKey || p.source === 'anon';
+          return (
+            <button key={p.id}
+              onClick={() => available ? selectProvider(p.id) : onManageKeys()}
+              className={[
+                'flex items-center gap-2 px-2.5 py-2 rounded-xl border text-left transition-all',
+                isSelected ? 'border-accent/50 bg-accent/8 shadow-glow-sm' : available ? 'border-border/50 hover:border-accent/25 bg-panel/50' : 'border-border/30 bg-panel/30 opacity-50',
+              ].join(' ')}>
+              <div className={['w-1.5 h-1.5 rounded-full flex-shrink-0', p.source==='anon'?'bg-success/60 animate-pulse':p.hasKey?'bg-success':'bg-border'].join(' ')}/>
+              <span className={['flex-1 text-[11px] font-semibold truncate', isSelected?'text-accent':'text-text-primary/80'].join(' ')}>{p.name}</span>
+              {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"/>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Model selector + test */}
+      {selectedId && (
+        <div className="flex flex-col gap-2.5 border-t border-border/30 pt-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted/50 flex-shrink-0">
+              {curProvider?.name}
+            </span>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium flex-shrink-0 ${TIER_BADGE[curProvider?.tier ?? 'free']?.cls}`}>
+              {TIER_BADGE[curProvider?.tier ?? 'free']?.label}
+            </span>
+            {fetchingModels && <Loader2 size={10} className="text-muted/40 animate-spin ml-auto"/>}
+          </div>
+
+          {/* Model dropdown */}
+          {models.length > 0 ? (
+            <select value={selectedModel} onChange={e => selectModel(e.target.value)}
+              className="bg-base/80 border border-border text-text-primary text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-accent/40 w-full">
+              {models.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : !fetchingModels ? (
+            <p className="text-[11px] text-muted/40 italic">No models found — add an API key in Settings</p>
+          ) : null}
+
+          {/* Action row */}
+          <div className="flex gap-2">
+            <button
+              onClick={testModel}
+              disabled={!selectedModel || testing}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-semibold rounded-xl border border-accent/25 text-accent/80 hover:text-accent hover:border-accent/50 transition-all disabled:opacity-40"
+            >
+              {testing ? <Loader2 size={10} className="animate-spin"/> : <FlaskConical size={10}/>}
+              Test
+            </button>
+            <button
+              onClick={activateBackend}
+              disabled={!selectedModel}
+              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-xl bg-accent text-base btn-glow hover:brightness-110 transition-all disabled:opacity-40"
+            >
+              <Zap size={10}/>Use this model
+            </button>
+          </div>
+
+          {/* Test result */}
+          {testResult && (
+            <div className={[
+              'px-3 py-2 rounded-xl border text-[11px] font-mono',
+              testResult === 'ok' ? 'border-success/30 bg-success/5 text-success/80' : 'border-error/30 bg-error/5 text-error/80',
+            ].join(' ')}>
+              {testResult === 'ok' ? '✅ ' : '❌ '}{testReply}
+            </div>
+          )}
+        </div>
+      )}
+
+      {displayProviders.length === 0 && (
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <Globe size={28} strokeWidth={1} className="text-muted/20"/>
+          <p className="text-sm text-muted/50">Loading providers…</p>
+        </div>
       )}
     </div>
   );
@@ -428,10 +594,13 @@ export function Dashboard({
 
   const fetchCloudProviders = useCallback(async () => {
     try {
-      const r = await fetch('/providers/list');
+      const headers: Record<string, string> = {};
+      const k = localStorage.getItem('bkg_user_api_key');
+      if (k) headers['Authorization'] = `Bearer ${k}`;
+      const r = await fetch('/providers/list', { headers });
       if (!r.ok) return;
       const d = await r.json() as { providers: CloudProviderStatus[] };
-      setCloudProviders((d.providers ?? []).slice(0, 12));
+      setCloudProviders((d.providers ?? []).slice(0, 19));
     } catch { /**/ }
   }, []);
 
@@ -578,36 +747,11 @@ export function Dashboard({
               ))}
             </div>
           ) : (
-            <div className="rounded-2xl border border-border/50 bg-panel/40 p-4"
-              style={{ backdropFilter: 'blur(8px)' }}>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs text-muted/70">
-                  {cloudProviders.filter(p=>p.hasKey).length} providers configured ·{' '}
-                  {cloudProviders.filter(p=>p.source==='anon').length} free (no key needed)
-                </p>
-                <button
-                  onClick={onOpenSettings}
-                  className="text-[11px] text-accent/70 hover:text-accent flex items-center gap-1 transition-colors"
-                >
-                  <Key size={10}/>Manage keys
-                </button>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                {cloudProviders.map(p => (
-                  <CloudProviderCard
-                    key={p.id}
-                    provider={p}
-                    onConfigure={() => onOpenSettings?.()}
-                  />
-                ))}
-              </div>
-              {cloudProviders.length === 0 && (
-                <div className="flex flex-col items-center gap-3 py-8 text-center">
-                  <Globe size={32} strokeWidth={1} className="text-muted/20"/>
-                  <p className="text-sm text-muted/50">Loading provider list…</p>
-                </div>
-              )}
-            </div>
+            <CloudPanel
+              providers={cloudProviders}
+              onManageKeys={() => onOpenSettings?.()}
+              dispatch={dispatch}
+            />
           )}
         </section>
 

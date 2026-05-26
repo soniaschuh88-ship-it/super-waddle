@@ -157,6 +157,8 @@ import { compositor }                                    from './compositing-ser
 import { globalConsistency }                             from './global-consistency.js';
 import { frameSmoother }                                 from './frame-smoother.js';
 import { gpuTrust, GRADE }                               from './gpu-trust.js';
+import { temporalCoherence }                             from './temporal-coherence.js';
+import { cognitiveBalancer }                             from './cognitive-load-balancer.js';
 
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
@@ -1793,6 +1795,68 @@ app.post('/mmo/render/world-snapshot', (req, res) => {
   res.json({ ok: true, avgCost: renderPartition.metrics.avgCost });
 });
 
+// ── /mmo/render/temporal — Temporal Coherence Layer ───────────────────────────
+
+/** GET /mmo/render/temporal — snapshot of temporal coherence state */
+app.get('/mmo/render/temporal', (_req, res) => res.json(temporalCoherence.snapshot()));
+
+/**
+ * POST /mmo/render/temporal/camera — record a camera sample from a peer
+ * Body: { peerId, pos:{x,y,z}, yaw, pitch, fov }
+ */
+app.post('/mmo/render/temporal/camera', (req, res) => {
+  const { peerId, pos = {x:0,y:0,z:0}, yaw = 0, pitch = 0, fov = 70 } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+
+  const traj   = temporalCoherence.recordCamera(peerId, { pos, yaw, pitch, fov });
+  const predict = temporalCoherence.predictCamera(peerId);
+
+  res.json({
+    ok:       true,
+    speed:    +traj.speed.toFixed(2),
+    lodBias:  traj.lodBias,
+    predict:  predict ? { pos: predict.pos, confidence: predict.confidence } : null,
+  });
+});
+
+/** GET /mmo/render/temporal/predict/:peerId — predict future camera position */
+app.get('/mmo/render/temporal/predict/:peerId', (req, res) => {
+  const aheadMs = parseInt(req.query.ahead ?? '300', 10);
+  const predict  = temporalCoherence.predictCamera(req.params.peerId, aheadMs);
+  res.json({ peerId: req.params.peerId, aheadMs, prediction: predict });
+});
+
+/** GET /mmo/render/temporal/anchor — current temporal anchor */
+app.get('/mmo/render/temporal/anchor', (_req, res) => {
+  res.json({ anchor: temporalCoherence.anchors.current, ageMs: Math.round(temporalCoherence.anchors.anchorAge) });
+});
+
+// ── /mmo/cognitive — Cognitive Load Balancer ──────────────────────────────────
+
+/** GET /mmo/cognitive — cognitive load balancer snapshot */
+app.get('/mmo/cognitive', (_req, res) => res.json(cognitiveBalancer.snapshot()));
+
+/**
+ * POST /mmo/cognitive/peer — register a peer with the load balancer
+ * Body: { peerId, gpuTier }
+ */
+app.post('/mmo/cognitive/peer', (req, res) => {
+  const { peerId, gpuTier = 0 } = req.body ?? {};
+  if (!peerId) return res.status(400).json({ error: 'peerId required' });
+  cognitiveBalancer.addPeer(peerId, +gpuTier);
+  res.json({ ok: true, budget: cognitiveBalancer.budgets.get(peerId)?.snapshot() });
+});
+
+/**
+ * POST /mmo/cognitive/ingest — ingest events through the cognitive filter
+ * Body: { events: [], zoneId, peerIds: [] }
+ */
+app.post('/mmo/cognitive/ingest', (req, res) => {
+  const { events = [], zoneId = '0:0:0', peerIds = [] } = req.body ?? {};
+  cognitiveBalancer.ingestBatch(events, zoneId, peerIds);
+  res.json({ ok: true, ingested: events.length, ratio: cognitiveBalancer.compressionRatio() });
+});
+
 // ── /mmo/render/consistency|smooth|trust — Visual Coherence Layer ─────────────
 
 /** GET /mmo/render/consistency — current global render state (lighting, TAA, fog) */
@@ -2814,6 +2878,12 @@ globalConsistency.start();
 
 // ── GPU Trust: start trust manager ──────────────────────────────────────────
 gpuTrust.start();
+
+// ── Temporal Coherence: start with consistency + cluster manager ─────────────
+temporalCoherence.start(globalConsistency, defaultMgr);
+
+// ── Cognitive Load Balancer: running at startup ──────────────────────────────
+// cognitiveBalancer already starts via .start() in its module
 
 // Start bandwidth shaper — delivers queued messages via WebSocket
 bandwidthShaper.start((peerId, messages) => {
