@@ -1,0 +1,36 @@
+# ── Node.js ───────────────────────────────────────────────────────────────────
+node_modules/
+dist/
+.npm/
+
+# ── bKG runtime data ──────────────────────────────────────────────────────────
+# Mount this directory as a Docker volume for persistence
+# .bkg/    ← NOT excluded so Dockerfile COPY gets nothing (works via volume)
+
+# ── Development ───────────────────────────────────────────────────────────────
+.git/
+.gitignore
+*.log
+*.pid
+.env.local
+.env.*.local
+coverage/
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Test artifacts ────────────────────────────────────────────────────────────
+/tmp/
+*.test.js
+*.spec.js
+
+# ── Large model files (shouldn't be in the image) ────────────────────────────
+*.gguf
+*.bin
+*.safetensors
+models/

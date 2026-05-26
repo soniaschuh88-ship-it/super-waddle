@@ -1,0 +1,98 @@
+# ── bKG docker-compose.yml ────────────────────────────────────────────────────
+# Clean container setup for testing and production deployment.
+#
+# Usage:
+#   docker compose up          # start all services
+#   docker compose up --build  # rebuild and start
+#   docker compose down        # stop and remove containers
+#   docker compose logs -f     # follow logs
+#
+# First run: the admin password is printed in the bkg container logs.
+#   docker compose logs bkg | grep "Admin password"
+
+version: "3.9"
+
+services:
+  # ── Main bKG application ────────────────────────────────────────────────────
+  bkg:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bkg-app:latest
+    container_name: bkg
+
+    ports:
+      - "${BKG_PORT:-4001}:4001"
+
+    environment:
+      BKG_PORT:       "4001"
+      BKG_HOST:       "0.0.0.0"
+      NODE_ENV:       "production"
+      # Override admin password hash (optional — auto-generated on first run)
+      # BKG_ADMIN_PASSWORD_HASH: "$2b$12$..."
+      # Ollama (optional — for local model inference)
+      # OLLAMA_HOST: http://ollama:11434
+
+    volumes:
+      # Persistent data: user keys, flow DB, world saves, VSL logs
+      - bkg-data:/root/.bkg
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4001/health/ready"]
+      interval: 15s
+      timeout:  5s
+      retries:  3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Optional: Nginx reverse proxy ───────────────────────────────────────────
+  # Uncomment to add HTTPS + domain name support
+  #
+  # nginx:
+  #   image: nginx:alpine
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on: [bkg]
+  #   restart: unless-stopped
+
+  # ── Optional: Ollama (local GPU inference) ──────────────────────────────────
+  # Uncomment if you have a GPU and want local model inference
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   restart: unless-stopped
+
+volumes:
+  bkg-data:
+    driver: local
+    # To use a specific host path instead of a named volume:
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /path/to/your/bkg-data
+
+  # ollama-data:
+  #   driver: local

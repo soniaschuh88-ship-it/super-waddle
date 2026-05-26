@@ -9,7 +9,7 @@ import { useState, useEffect } from 'react';
 import {
   Cpu, BarChart2, HardDrive, Settings, LogOut,
   Server, Box, Power, FlaskConical, Download,
-  Bot, Puzzle, Key, Globe, Lock, Cloud, Menu, X,
+  Bot, Puzzle, Key, Globe, Lock, Cloud, Menu, X, Database,
 } from 'lucide-react';
 import { AdminAuth, logout, verifyStoredToken, getToken } from './AdminAuth';
 import { OllamaManager }       from './OllamaManager';
@@ -24,10 +24,11 @@ import { AgentSettings }       from './AgentSettings';
 import { PluginManager }       from './PluginManager';
 import { ApiKeys }             from './ApiKeys';
 import { GlobalProviders }     from './GlobalProviders';
+import { DbViewer }             from './DbViewer';
 import { useAppState }         from '@/context/AppContext';
 
 type Tab = 'agent' | 'apikeys' | 'globals' | 'plugins' | 'servers' | 'models' |
-           'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings';
+           'embeddings' | 'stats' | 'ollama' | 'llamacpp' | 'webllm' | 'settings' | 'db';
 
 interface TabDef {
   id:      Tab;
@@ -53,6 +54,7 @@ const TABS: TabDef[] = [
   { id:'llamacpp',   label:'node-llama-cpp',    icon:Box,         mode:'private', section:'local'   },
   { id:'webllm',     label:'WebLLM Cache',      icon:HardDrive,   mode:'private', section:'local'   },
   { id:'embeddings', label:'Embeddings Lab',    icon:FlaskConical,                 section:'local'   },
+  { id:'db',         label:'DB Viewer',         icon:Database,                     section:'general' },
 ];
 
 const SECTION_LABELS = {
@@ -340,6 +342,7 @@ export function AdminApp() {
             {tab === 'llamacpp'   && <NodeLlamaCppManager/>}
             {tab === 'webllm'     && <WebLLMCache/>}
             {tab === 'settings'   && <AISettings/>}
+            {tab === 'db'         && <DbViewer/>}
           </div>
         </main>
       </div>

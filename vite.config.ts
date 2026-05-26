@@ -4,8 +4,12 @@ import path from 'path';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const BACKEND_PORT = env.BKG_PORT ?? '4001';
-  const BACKEND      = `http://localhost:${BACKEND_PORT}`;
+  // Sync port detection: prefer BKG_PORT env, then common dev ports
+  const BACKEND_PORT = env.BKG_PORT ? parseInt(env.BKG_PORT, 10)
+    : parseInt(process.env.BKG_PORT ?? '5020', 10);
+  const BACKEND = `http://localhost:${BACKEND_PORT}`;
+
+  console.log(`[vite] → proxying API to bKG server on port ${BACKEND_PORT}`);
 
   const API_PREFIXES = [
     '/api', '/auth', '/admin',
@@ -22,7 +26,7 @@ export default defineConfig(({ mode }) => {
     proxy[prefix] = {
       target:       BACKEND,
       changeOrigin: true,
-      // Suppress ECONNREFUSED noise while the backend is starting up
+      // Suppress ECONNREFUSED spam — return 503 JSON instead
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       configure: (proxyServer: any) => {
         proxyServer.on('error', (err: NodeJS.ErrnoException, _req: unknown, res: any) => {
@@ -50,6 +54,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       allowedHosts: true,
+      port:         3000,   // Vite dev server on 3000, backend on 5020
       proxy,
     },
   };
