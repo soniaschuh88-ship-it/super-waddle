@@ -92,8 +92,7 @@ import {
   listSecrets, setSecret, deleteSecret,
   getEvals, createEval,
   getBoardData, buildPlanningPrompt, savePlanMd,
-  subscribeBoardEvents,
-  checkAndIncrRateLimit,
+  subscribeBoardEvents, checkAndIncrRateLimit, getFlowStats,
 } from './bkg-flow.js';
 
 import {
@@ -981,6 +980,18 @@ app.get('/flow/activity', (req, res) =>
   res.json(getActivity(req.query.projectId ?? 'default', parseInt(req.query.limit ?? '50', 10))),
 );
 
+/**
+ * GET /flow/stats — task throughput by status for today/period (E5)
+ * Query: ?projectId=&since=<timestamp>
+ * Returns: { [status]: count } map of tasks moved TO that status since `since`
+ */
+app.get('/flow/stats', (req, res) => {
+  const projectId = req.query.projectId ?? 'default';
+  const since     = parseInt(req.query.since ?? String(Date.now() - 86400000), 10);
+  const stats = getFlowStats(projectId, since);
+  res.json(stats);
+});
+
 // ── Secrets ───────────────────────────────────────────────────────────────────
 
 app.get('/flow/secrets', (req, res) => res.json(listSecrets(req.query.projectId ?? 'default')));
@@ -1000,6 +1011,175 @@ app.post('/flow/tasks/:id/evals', (req, res) => {
   const { score, evidence } = req.body ?? {};
   if (score === undefined) return res.status(400).json({ error: 'score required' });
   res.status(201).json(createEval(req.params.id, parseFloat(score), evidence ?? {}));
+});
+
+// ── E6: Provider health check ─────────────────────────────────────────────────
+
+/**
+ * POST /providers/:id/test — send a 1-token request to verify the key works.
+ * Returns { ok, status, latencyMs, model }
+ */
+app.post('/providers/:id/test', async (req, res) => {
+  const providerId = req.params.id;
+  const p = getProvider(providerId);
+  if (!p) return res.status(404).json({ error: 'Unknown provider' });
+
+  const keyId      = getCallerKeyId(req);
+  const { key }    = resolveKeyForUser(providerId, keyId ?? '');
+
+  if (!key) return res.status(403).json({ error: 'No API key configured for this provider' });
+
+  const model   = req.body?.model ?? Object.keys({ groq:'llama-3.1-8b-instant', nvidia:'meta/llama-3.1-8b-instruct', openrouter:'meta-llama/llama-3.2-1b-instruct:free', mistral:'open-mistral-7b', sambanova:'Meta-Llama-3.1-8B-Instruct', cerebras:'llama3.1-8b', default:'default' })[0];
+  const testModel = {
+    groq:'llama-3.1-8b-instant', nvidia:'meta/llama-3.1-8b-instruct',
+    openrouter:'meta-llama/llama-3.2-1b-instruct:free', mistral:'open-mistral-7b',
+    sambanova:'Meta-Llama-3.1-8B-Instruct', cerebras:'llama3.1-8b',
+    xai:'grok-3-mini', huggingface:'Qwen/Qwen2.5-0.5B-Instruct',
+    llm7:'default', kilo:'kilo-mini',
+  }[providerId] ?? model;
+
+  const start = Date.now();
+  try {
+    const { default: fetch } = await import('node-fetch').catch(() => ({ default: globalThis.fetch }));
+    const headers = { 'Content-Type': 'application/json' };
+    if (key !== 'anon') headers['Authorization'] = `Bearer ${key}`;
+
+    const r = await fetch(`${p.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model: testModel, messages:[{ role:'user', content:'Reply with one word: OK' }], max_tokens: 5 }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const latencyMs = Date.now() - start;
+    if (r.ok) {
+      const d = await r.json();
+      res.json({ ok: true, status: r.status, latencyMs, model: testModel, reply: d.choices?.[0]?.message?.content ?? '' });
+    } else {
+      const txt = await r.text().catch(() => `${r.status}`);
+      res.json({ ok: false, status: r.status, latencyMs, error: txt.slice(0, 200) });
+    }
+  } catch (e) {
+    res.json({ ok: false, status: 0, latencyMs: Date.now() - start, error: e.message });
+  }
+});
+
+// ── E14: Flow export ──────────────────────────────────────────────────────────
+
+/**
+ * GET /flow/export/:projectId — export all tasks as Markdown or CSV
+ * Query: ?format=md|csv  (default: md)
+ */
+app.get('/flow/export/:projectId', (req, res) => {
+  const projectId = req.params.projectId;
+  const format    = req.query.format === 'csv' ? 'csv' : 'md';
+  const project   = getProject(projectId);
+  const tasks     = listTasks(projectId, { archived: true });
+
+  if (format === 'csv') {
+    const header = 'id,title,status,priority,labels,created_at,done_at\n';
+    const rows   = tasks.map(t =>
+      [t.id, `"${t.title.replace(/"/g,'""')}"`, t.status, t.priority,
+       `"${(t.labels ?? []).join(';')}"`,
+       new Date(t.created_at).toISOString(),
+       t.done_at ? new Date(t.done_at).toISOString() : ''].join(','),
+    ).join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="bkg-flow-${projectId}.csv"`);
+    return res.send(header + rows);
+  }
+
+  // Markdown export
+  const COLS = ['planning','todo','in-progress','review','done','archived'];
+  const STATUS_ICON = { planning:'🔮', todo:'📋', 'in-progress':'⚡', review:'🔍', done:'✅', archived:'📦' };
+  const grouped = {};
+  for (const col of COLS) grouped[col] = tasks.filter(t => t.status === col);
+
+  let md = `# ${project?.name ?? projectId} — Task Export\n\n`;
+  md += `> Exported ${new Date().toISOString().slice(0,10)} · ${tasks.length} tasks\n\n`;
+
+  for (const col of COLS) {
+    const list = grouped[col];
+    if (!list.length) continue;
+    md += `## ${STATUS_ICON[col] ?? '•'} ${col.charAt(0).toUpperCase() + col.slice(1)} (${list.length})\n\n`;
+    for (const t of list) {
+      const prefix = t.status === 'done' ? '[x]' : t.status === 'in-progress' ? '[~]' : '[ ]';
+      md += `- ${prefix} **${t.title}**`;
+      if (t.description) md += ` — ${t.description.slice(0, 80)}`;
+      if (t.labels?.length) md += ` \`${t.labels.join('` `')}\``;
+      md += `\n`;
+    }
+    md += '\n';
+  }
+
+  res.setHeader('Content-Type', 'text/markdown');
+  res.setHeader('Content-Disposition', `attachment; filename="bkg-flow-${projectId}.md"`);
+  res.send(md);
+});
+
+// ── E18: Webhook trigger ──────────────────────────────────────────────────────
+
+/**
+ * POST /flow/webhook/:projectId — create a task from an incoming webhook.
+ * Accepts GitHub issue format, Jira, or custom { title, description, labels }.
+ * Query: ?secret=  (optional shared secret)
+ */
+app.post('/flow/webhook/:projectId', (req, res) => {
+  const { projectId } = req.params;
+  const body = req.body ?? {};
+
+  // Support GitHub issue format
+  const title       = body.title ?? body.issue?.title ?? body.summary ?? 'Webhook Task';
+  const description = body.description ?? body.body ?? body.issue?.body ?? '';
+  const labels      = body.labels
+    ? (Array.isArray(body.labels) ? body.labels.map((l) => typeof l === 'string' ? l : l.name ?? '') : [body.labels])
+    : [];
+
+  try {
+    const task = createTask({ title, description, status: 'todo', projectId, labels, metadata: { source: 'webhook', payload: body } });
+    appendLog(task.id, `Created via webhook`, 'info');
+    res.status(201).json({ id: task.id, title: task.title, status: task.status });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── E15: Install agent ────────────────────────────────────────────────────────
+
+/**
+ * POST /hub/agents/:id/install — install a missing coding agent via npm
+ * Body: optional { global: boolean }
+ * Streams installation output as SSE.
+ */
+app.post('/hub/agents/:id/install', (req, res) => {
+  const INSTALL_CMDS = {
+    'claude-code': ['npm', 'install', '-g', '@anthropic-ai/claude-code'],
+    'codex':       ['npm', 'install', '-g', '@openai/codex'],
+    'opencode':    ['npm', 'install', '-g', 'opencode-ai'],
+    'amp':         ['npm', 'install', '-g', '@sourcegraph/amp'],
+  };
+
+  const agentId = req.params.id;
+  const cmd     = INSTALL_CMDS[agentId];
+  if (!cmd) return res.status(404).json({ error: `No install command for agent: ${agentId}` });
+
+  res.setHeader('Content-Type',      'text/event-stream');
+  res.setHeader('Cache-Control',     'no-cache');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  send('start', { agentId, cmd: cmd.join(' ') });
+
+  const child = spawn(cmd[0], cmd.slice(1), { stdio: ['ignore','pipe','pipe'] });
+
+  child.stdout.on('data', d => send('stdout', { text: d.toString() }));
+  child.stderr.on('data', d => send('stderr', { text: d.toString() }));
+  child.on('exit', code => {
+    send('done', { exitCode: code, success: code === 0 });
+    res.end();
+  });
+  child.on('error', e => { send('error', { message: e.message }); res.end(); });
+  req.on('close', () => { try { child.kill(); } catch { /**/ } });
 });
 
 // ── /game/* — bKG Game Creation System ──────────────────────────────────────

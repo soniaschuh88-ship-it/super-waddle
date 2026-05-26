@@ -9,10 +9,10 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  X, CheckSquare, Square, Plus,
+  X, CheckSquare, Square, Plus, Tag,
   Zap, MessageSquare, Terminal, BarChart2,
   Edit3, Save, Loader2, Code2, Bot,
-  GitBranch, Tag, ArrowRight, CheckCircle2,
+  GitBranch, ArrowRight, CheckCircle2,
 } from 'lucide-react';
 import type { FlowTask } from './FlowBoard';
 import { useAppState } from '@/context/AppContext';
@@ -98,6 +98,86 @@ function MarkdownView({ md }: { md: string }) {
 }
 
 // ── Main FlowTask modal ───────────────────────────────────────────────────────
+
+// ── Labels Editor (E8) ───────────────────────────────────────────────────────
+
+const PRESET_LABELS = ['bug','feature','refactor','docs','test','perf','design','game','urgent','blocked'];
+
+function LabelsEditor({ labels, onChange }: { labels: string[]; onChange: (l: string[]) => Promise<void> }) {
+  const [adding, setAdding] = useState(false);
+  const [draft,  setDraft]  = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const remove = async (l: string) => {
+    setSaving(true);
+    await onChange(labels.filter(x => x !== l));
+    setSaving(false);
+  };
+
+  const add = async (l: string) => {
+    const clean = l.trim().toLowerCase().replace(/\s+/g,'-');
+    if (!clean || labels.includes(clean)) { setDraft(''); setAdding(false); return; }
+    setSaving(true);
+    await onChange([...labels, clean]);
+    setDraft(''); setAdding(false); setSaving(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[10px] font-bold text-muted/50 uppercase tracking-wider flex items-center gap-1.5">
+        <Tag size={9}/>Labels
+      </label>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {labels.map(l => (
+          <span key={l}
+            className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border font-medium group/label"
+            style={{ background: 'rgba(0,229,255,0.06)', borderColor: 'rgba(0,229,255,0.2)', color: '#00e5ff' }}>
+            {l}
+            <button onClick={() => void remove(l)}
+              className="opacity-0 group-hover/label:opacity-100 text-muted/40 hover:text-error transition-all ml-0.5">
+              <X size={9}/>
+            </button>
+          </span>
+        ))}
+
+        {adding ? (
+          <div className="flex items-center gap-1">
+            <input
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void add(draft); if (e.key === 'Escape') { setAdding(false); setDraft(''); } }}
+              placeholder="label…"
+              autoFocus
+              className="bg-base/80 border border-accent/30 text-text-primary text-[11px] rounded-lg px-2 py-1 w-24 focus:outline-none"
+            />
+            <button onClick={() => void add(draft)}
+              className="text-success/70 hover:text-success transition-colors"><CheckCircle2 size={12}/></button>
+            <button onClick={() => { setAdding(false); setDraft(''); }}
+              className="text-muted/40 hover:text-muted transition-colors"><X size={12}/></button>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)}
+            className="text-[11px] text-muted/40 hover:text-accent border border-dashed border-border/40 hover:border-accent/30 rounded-full px-2 py-0.5 transition-all flex items-center gap-1">
+            {saving ? <Loader2 size={9} className="animate-spin"/> : <Plus size={9}/>}
+            Add
+          </button>
+        )}
+      </div>
+
+      {/* Preset label chips */}
+      {adding && (
+        <div className="flex flex-wrap gap-1 mt-0.5">
+          {PRESET_LABELS.filter(p => !labels.includes(p)).map(p => (
+            <button key={p} onClick={() => void add(p)}
+              className="text-[10px] px-1.5 py-0.5 rounded border border-border/40 text-muted/50 hover:border-accent/30 hover:text-accent transition-all">
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function FlowTask({
   task,
@@ -425,6 +505,14 @@ export function FlowTask({
                   <p className="text-[11px] text-text-primary">{PRIORITY_LABELS[Math.floor((t.priority ?? 50) / 10)] || 'Medium'}</p>
                 </div>
               </div>
+
+              {/* E8 — Labels editor */}
+              <LabelsEditor
+                labels={t.labels ?? []}
+                onChange={async (newLabels) => {
+                  await save({ labels: newLabels } as Partial<FlowTask>);
+                }}
+              />
 
               {/* AI Plan button */}
               <button onClick={planWithAI} disabled={planning || running}

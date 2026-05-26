@@ -375,11 +375,13 @@ export function createTask(data) {
 export function updateTask(id, data) {
   const allowed = ['title','description','status','priority','order_index','prompt_md',
     'exec_model','plan_model','agent_session','pause_reason','started_at','done_at',
-    'mission_id','milestone_id'];
-  const cols = Object.keys(data).filter(k => allowed.includes(k));
+    'mission_id','milestone_id','labels','metadata'];
+  const rawCols = Object.keys(data).filter(k => allowed.includes(k));
+  const cols    = rawCols.map(k => `${k}=?`);
+  const values  = rawCols.map(k =>
+    (k === 'labels' || k === 'metadata') ? JSON.stringify(data[k]) : data[k],
+  );
   if (!cols.length) return getTask(id);
-
-  const values = cols.map(k => data[k]);
 
   // Track status transitions
   if (data.status) {
@@ -387,15 +389,15 @@ export function updateTask(id, data) {
     if (old && old.status !== data.status) {
       activityLog(old.project_id, id, 'task.status_changed', { from: old.status, to: data.status });
       if (data.status === 'in-progress' && !data.started_at) {
-        cols.push('started_at'); values.push(now());
+        cols.push('started_at=?'); values.push(now());
       }
       if (data.status === 'done' && !data.done_at) {
-        cols.push('done_at'); values.push(now());
+        cols.push('done_at=?'); values.push(now());
       }
     }
   }
 
-  db.prepare(`UPDATE tasks SET ${cols.map(c => `${c}=?`).join(',')}, updated_at=? WHERE id=?`)
+  db.prepare(`UPDATE tasks SET ${cols.join(',')}, updated_at=? WHERE id=?`)
     .run(...values, now(), id);
   const updated = getTask(id);
   if (updated) emitBoard(updated.project_id, 'task.updated', updated);
@@ -744,6 +746,29 @@ export function checkAndIncrRateLimit(ip) {
 
   db.prepare('UPDATE rate_limits SET count=count+1 WHERE ip=?').run(ip);
   return { allowed: true, remaining: RATE_LIMIT - row.count - 1 };
+}
+
+// ── Stats (E5 — column throughput) ───────────────────────────────────────────
+
+/**
+ * Returns { [status]: count } of task status transitions since `since` timestamp.
+ * Used by FlowBoard column headers to show "+N today" throughput badges.
+ */
+export function getFlowStats(projectId, since = Date.now() - 86400000) {
+  const rows = db.prepare(`
+    SELECT json_extract(payload, '$.to') AS status, COUNT(*) AS cnt
+    FROM   activity
+    WHERE  project_id=?
+      AND  type='task.status_changed'
+      AND  created_at >= ?
+    GROUP BY status
+  `).all(projectId, since);
+
+  const result = {};
+  for (const r of rows) {
+    if (r.status) result[r.status] = r.cnt;
+  }
+  return result;
 }
 
 export function flowHealth() {
