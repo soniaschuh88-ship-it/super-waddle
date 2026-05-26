@@ -95,7 +95,8 @@ void main() {
   float dist = distance(a_pos, u_camPos);
   v_fog = clamp((dist - u_fogNear) / (u_fogFar - u_fogNear), 0.0, 1.0);
 
-  flat v_mat = a_mat;
+  // Assign flat-interpolated mat ID (flat qualifier is on the declaration, not here)
+  v_mat = a_mat;
 }
 `;
 

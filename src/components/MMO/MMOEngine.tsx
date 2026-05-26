@@ -1283,7 +1283,25 @@ Stale tile → automatic reassignment to fastest peer
 
 NPC render split:
   logic   → SIMULATION_NODE (VSL authority)
-  render  → nearest RENDER_NODE peer`}</pre>
+  render  → nearest RENDER_NODE peer
+
+Global Consistency Layer (NEW):
+  All peers share identical: sunDir, ambient, fog, exposure
+  TAA jitter: Halton(2,3) sequence, 16-sample period
+  Day/night: procedural sky, 1 real-min = 1 in-world day
+  Motion blur: per-frame jitter delta → velocity vectors
+
+Anti-Latency System (NEW):
+  Jitter buffer: 3-frame ring, FIFO release on deadline
+  Tile interpolation: extrapolate 1 frame forward on miss
+  Quorum gate: 7/9 tiles needed → present, or 16ms deadline
+  Missing tiles: freeze + alpha-blend last-known-good
+
+GPU Trust (NEW):
+  score = delivery×0.40 + latency×0.35 + quality×0.25
+  Grades: EXCELLENT → GOOD → FAIR → POOR → CRITICAL → EVICTED
+  Penalty: LOD2 forced + tile count capped per grade
+  Recovery: 5 consecutive good frames → restore grade`}</pre>
               </div>
             </div>
           </div>

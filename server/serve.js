@@ -154,6 +154,9 @@ import { StateHealer, crc32, ledgerCRC, HEAL_LEVEL_NAME } from './state-healer.j
 import { ZoneStitcher, analyzeZoneConnectivity }         from './zone-stitcher.js';
 import { renderPartition, assignTiles, GRID_COLS, GRID_ROWS, GPU_BUDGET } from './render-partition.js';
 import { compositor }                                    from './compositing-serverless.js';
+import { globalConsistency }                             from './global-consistency.js';
+import { frameSmoother }                                 from './frame-smoother.js';
+import { gpuTrust, GRADE }                               from './gpu-trust.js';
 
 const __dir  = dirname(fileURLToPath(import.meta.url));
 const DIST   = resolve(__dir, process.env.DIST_DIR ?? '../dist');
@@ -1790,6 +1793,96 @@ app.post('/mmo/render/world-snapshot', (req, res) => {
   res.json({ ok: true, avgCost: renderPartition.metrics.avgCost });
 });
 
+// ── /mmo/render/consistency|smooth|trust — Visual Coherence Layer ─────────────
+
+/** GET /mmo/render/consistency — current global render state (lighting, TAA, fog) */
+app.get('/mmo/render/consistency', (_req, res) => res.json(globalConsistency.snapshot()));
+
+/** GET /mmo/render/consistency/state — just the raw render state (minimal payload for peers) */
+app.get('/mmo/render/consistency/state', (_req, res) => res.json(globalConsistency.state));
+
+/** POST /mmo/render/consistency/time — set time of day (0–1, 0.5=noon) */
+app.post('/mmo/render/consistency/time', (req, res) => {
+  const { time, daySpeed } = req.body ?? {};
+  if (time !== undefined) globalConsistency.setTimeOfDay(+time);
+  if (daySpeed !== undefined) globalConsistency.setDaySpeed(+daySpeed);
+  res.json({ ok: true, timeOfDay: globalConsistency.timeOfDay });
+});
+
+/** POST /mmo/render/consistency/fog — override fog near/far */
+app.post('/mmo/render/consistency/fog', (req, res) => {
+  const { near = 150, far = 600 } = req.body ?? {};
+  globalConsistency.setFog(+near, +far);
+  res.json({ ok: true, fogNear: globalConsistency.fogNear, fogFar: globalConsistency.fogFar });
+});
+
+/** POST /mmo/render/consistency/light — override lighting params (null to reset to procedural) */
+app.post('/mmo/render/consistency/light', (req, res) => {
+  const { override } = req.body ?? {};
+  globalConsistency.setLightOverride(override ?? null);
+  res.json({ ok: true, override: !!override });
+});
+
+/** GET /mmo/render/consistency/motion — motion blur params for current + prev frame */
+app.get('/mmo/render/consistency/motion', (_req, res) => {
+  res.json({ ...globalConsistency.motionBlurParams(), prevState: globalConsistency.prevState(1) });
+});
+
+/** GET /mmo/render/smoother — frame smoother snapshot */
+app.get('/mmo/render/smoother', (_req, res) => res.json(frameSmoother.snapshot()));
+
+/**
+ * POST /mmo/render/smoother/frame — peer submits tile frame with timing metadata
+ * Body: { tileId, seq, peerId, bytes, latencyMs?, camDeltaX?, camDeltaY? }
+ */
+app.post('/mmo/render/smoother/frame', (req, res) => {
+  const { tileId, seq, peerId, bytes, latencyMs, camDeltaX, camDeltaY } = req.body ?? {};
+  if (!tileId || !peerId) return res.status(400).json({ error: 'tileId + peerId required' });
+
+  // Ingest into jitter buffer
+  frameSmoother.ingest({ tileId, seq: +seq || 0, peerId, bytes: +bytes || 0, camDeltaX, camDeltaY });
+
+  // Also record in compositor and trust module
+  compositor.recordTileFrame({ tileId, seq: +seq || 0, peerId, bytes: +bytes || 0 });
+  if (latencyMs !== undefined) gpuTrust.recordDelivery(peerId, +latencyMs);
+
+  res.json({ ok: true, tileId });
+});
+
+/** GET /mmo/render/trust — GPU trust leaderboard + stats */
+app.get('/mmo/render/trust', (_req, res) => res.json(gpuTrust.snapshot()));
+
+/** GET /mmo/render/trust/:peerId — trust record for a specific peer */
+app.get('/mmo/render/trust/:peerId', (req, res) => {
+  const { peerId } = req.params;
+  const grade = gpuTrust.getGrade(peerId);
+  res.json({
+    peerId,
+    grade,
+    trustScore: gpuTrust.getTrust(peerId),
+    maxTiles:   gpuTrust.getMaxTiles(peerId),
+    lod:        gpuTrust.getLod(peerId),
+    isEvicted:  gpuTrust.isEvicted(peerId),
+  });
+});
+
+/**
+ * POST /mmo/render/trust/quality — peer reports pixel quality of received tile
+ * Body: { peerId, quality (0–1) }
+ */
+app.post('/mmo/render/trust/quality', (req, res) => {
+  const { peerId, quality } = req.body ?? {};
+  if (!peerId || quality === undefined) return res.status(400).json({ error: 'peerId + quality required' });
+  gpuTrust.reportQuality(peerId, +quality);
+  res.json({ ok: true, grade: gpuTrust.getGrade(peerId), trustScore: gpuTrust.getTrust(peerId) });
+});
+
+/** POST /mmo/render/trust/:peerId/miss — record a missed frame for a peer */
+app.post('/mmo/render/trust/:peerId/miss', (req, res) => {
+  gpuTrust.recordMiss(req.params.peerId);
+  res.json({ ok: true, grade: gpuTrust.getGrade(req.params.peerId) });
+});
+
 // ── /mmo/chaos/* — Chaos Recovery Kernel ─────────────────────────────────────
 
 /** GET /mmo/chaos/stats — overall chaos detection + recovery stats */
@@ -2714,7 +2807,13 @@ chaosKernel.injectDeps({ bandwidthShaper });
 setTimeout(() => {
   renderPartition.rebalance();
   compositor.broadcastAssignment(renderPartition.getAssignmentMap());
-}, 2000);  // brief delay so peers can join
+}, 2000);
+
+// ── Global Consistency: start day/night cycle ────────────────────────────────
+globalConsistency.start();
+
+// ── GPU Trust: start trust manager ──────────────────────────────────────────
+gpuTrust.start();
 
 // Start bandwidth shaper — delivers queued messages via WebSocket
 bandwidthShaper.start((peerId, messages) => {
