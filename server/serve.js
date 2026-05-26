@@ -25,6 +25,7 @@ import { createServer } from 'http';
 import { spawn }        from 'child_process';
 import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 
 import {
   startSession, sendMessage, abortSession,
@@ -318,18 +319,46 @@ app.put('/settings', (req, res) => {
 
 // ── Static file serving (SPA) ─────────────────────────────────────────────────
 
+// ── Readiness + health endpoints (must be before static/SPA catch-all) ───────
+
+let _ready = false;
+
+/** GET /health — liveness probe */
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', pid: process.pid, uptime: Math.round(process.uptime()), port: PORT });
+});
+
+/** GET /health/ready — readiness probe (used by icadp.sh to confirm server is up) */
+app.get('/health/ready', (_req, res) => {
+  if (_ready) res.json({ ready: true, pid: process.pid });
+  else        res.status(503).json({ ready: false });
+});
+
+// ── Static file serving (SPA) ─────────────────────────────────────────────────
+
 app.use(express.static(DIST, { maxAge: 0 }));
 app.get('*', (_req, res) => res.sendFile(join(DIST, 'index.html')));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, HOST, () => {
+// Write PID file so icadp.sh can track and kill us reliably
+const PID_DIR  = join(__dir, '../.icadp/run');
+const PID_FILE = join(PID_DIR, 'serve.pid');
+
+try {
+  mkdirSync(PID_DIR, { recursive: true });
+  writeFileSync(PID_FILE, String(process.pid));
+} catch { /* non-fatal: PID dir may not exist in CI */ }
+
+const httpServer = app.listen(PORT, HOST, () => {
+  _ready = true;
   console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║       ICADP 3.0 — Unified Server  (pi-agent-core)       ║
 ╠══════════════════════════════════════════════════════════╣
 ║  App       : http://localhost:${PORT}
 ║  Admin     : http://localhost:${PORT}/admin
+║  Ready     : http://localhost:${PORT}/health/ready
 ╠══════════════════════════════════════════════════════════╣
 ║  /api/*     model server manager  (llama-cpp + ollama)  ║
 ║  /agent/*   coding agent          (pi-agent-core)       ║
@@ -339,5 +368,49 @@ app.listen(PORT, HOST, () => {
 `);
 });
 
-process.on('SIGTERM', () => { stopLlama(); stopOllama(); process.exit(0); });
-process.on('SIGINT',  () => { stopLlama(); stopOllama(); process.exit(0); });
+// Track open connections so we can close them during graceful shutdown
+const connections = new Set();
+httpServer.on('connection', (conn) => {
+  connections.add(conn);
+  conn.once('close', () => connections.delete(conn));
+});
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+function shutdown(signal) {
+  console.log(`\n[serve] Received ${signal} — shutting down gracefully…`);
+  _ready = false;
+
+  // Stop managed child processes first
+  stopLlama();
+  stopOllama();
+
+  // Stop accepting new connections
+  httpServer.close(() => {
+    console.log('[serve] HTTP server closed');
+    // Remove PID file
+    try { if (existsSync(PID_FILE)) unlinkSync(PID_FILE); } catch { /**/ }
+    process.exit(0);
+  });
+
+  // Force-close all open connections after a grace period
+  setTimeout(() => {
+    for (const conn of connections) conn.destroy();
+  }, 3000);
+
+  // Hard exit if still alive after 8 s
+  setTimeout(() => {
+    console.error('[serve] Forced exit after timeout');
+    process.exit(1);
+  }, 8000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('uncaughtException', (err) => {
+  console.error('[serve] Uncaught exception:', err);
+  shutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[serve] Unhandled rejection:', reason);
+});

@@ -3,3 +3,8 @@ dist/
 .vite/
 *.local
 .env
+# ICADP runtime files (PID, logs, locks)
+.icadp/run/
+.icadp/logs/
+# Loaded config (keep example, ignore actual)
+.icadp.env
