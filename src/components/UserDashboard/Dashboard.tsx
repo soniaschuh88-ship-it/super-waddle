@@ -666,13 +666,13 @@ export function Dashboard({
           style={{ background: 'radial-gradient(ellipse, rgba(168,85,247,0.1) 0%, transparent 70%)' }}/>
       </div>
 
-      <div className="relative max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-10 flex flex-col gap-8 pb-16">
+      <div className="relative max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-8 flex flex-col gap-6 sm:gap-8 pb-16">
 
         {/* ── Hero ── */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1
-              className="text-3xl sm:text-4xl font-bold tracking-wider leading-none"
+              className="text-2xl sm:text-3xl font-bold tracking-wider leading-none"
               style={{
                 fontFamily: "'Orbitron', sans-serif",
                 background: 'linear-gradient(135deg, #00e5ff 0%, #a855f7 60%, #00e5ff 100%)',

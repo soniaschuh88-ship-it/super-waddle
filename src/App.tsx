@@ -3,7 +3,7 @@ import { AppShell }              from '@/components/Layout/AppShell';
 import { Dashboard }             from '@/components/UserDashboard/Dashboard';
 import { ModelTester }           from '@/components/UserDashboard/ModelTester';
 import { UserSettings }          from '@/components/UserDashboard/UserSettings';
-import { Onboarding }            from '@/components/UserDashboard/Onboarding';
+import { Onboarding, isDismissed } from '@/components/UserDashboard/Onboarding';
 import { WizardModal }           from '@/components/Stufe1/WizardModal';
 import { ValidationLoop }        from '@/components/Stufe1_5/ValidationLoop';
 import { DualPaneExplorer }      from '@/components/Stufe2/DualPaneExplorer';
@@ -49,11 +49,22 @@ function StageView() {
   }
 }
 
-export default function App() {
-  const [showOnboarding, setShowOnboarding] = useState(() => {
-    return !localStorage.getItem('bkg_user_api_key');
-  });
+/**
+ * Determine whether to auto-show onboarding:
+ *   - Show only if user has NO api key AND has NOT previously dismissed.
+ *   - Once user clicks X → stores bkg_onboarding_dismissed → never auto-shows again.
+ *   - User can manually re-trigger via Dashboard → "Re-run setup" button.
+ */
+function shouldAutoShow(): boolean {
+  const hasKey    = !!localStorage.getItem('bkg_user_api_key');
+  const dismissed = isDismissed();
+  return !hasKey && !dismissed;
+}
 
+export default function App() {
+  const [showOnboarding, setShowOnboarding] = useState(shouldAutoShow);
+
+  // Allow manual re-trigger from Dashboard
   useEffect(() => {
     const handler = () => setShowOnboarding(true);
     window.addEventListener('bkg:show-onboarding', handler);
