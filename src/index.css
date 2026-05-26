@@ -400,7 +400,24 @@ canvas:focus { outline: none; }
 .grid-line { stroke: rgba(13,42,64,0.8); stroke-width: 1; stroke-dasharray: 4 4; }
 
 /* Status dots */
-.dot-online  { width: 7px; height: 7px; border-radius: 50%; background: #00e5a0; box-shadow: 0 0 6px #00e5a0; }
-.dot-offline { width: 7px; height: 7px; border-radius: 50%; background: #ff3d6b; }
-.dot-pending { width: 7px; height: 7px; border-radius: 50%; background: #ffb300; animation: pulse 1s infinite; }
+/* ── Layout containers — no horizontal overflow ───────────────────────────── */
+/* This prevents the app from ever being wider than the viewport */
+#root {
+  overflow-x: hidden;
+  /* On very large monitors, cap to a comfortable reading width */
+  max-width: 100vw;
+}
+
+/* Main content panels: cap at 1600px so they don't stretch indefinitely */
+main > * {
+  max-width: 1600px;
+}
+
+/* Fix for very small viewports (<380px) — reduce base font slightly */
+@media (max-width: 380px) {
+  body { font-size: 13px; }
+  .text-sm  { font-size: 0.8125rem; }
+  .text-xs  { font-size: 0.6875rem; }
+  .px-4     { padding-left: 0.75rem; padding-right: 0.75rem; }
+}
 

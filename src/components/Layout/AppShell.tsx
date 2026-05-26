@@ -132,9 +132,13 @@ function MobileDrawer({ open, onClose, stage, onNav, mode, onMode }: DrawerProps
   const isPrivate = mode === 'private';
 
   const NAV_ITEMS = [
-    { id: 'home',     icon: LayoutDashboard, label: 'Dashboard' },
-    { id: 'stufe1',   icon: Plus,            label: 'New Plan'  },
-    { id: 'agenthub', icon: Bot,             label: 'Agents'    },
+    { id: 'home',     icon: LayoutDashboard, label: 'Dashboard',   color: undefined   },
+    { id: 'stufe1',   icon: Plus,            label: 'New Plan',    color: undefined   },
+    { id: 'agenthub', icon: Bot,             label: 'Agents',      color: undefined   },
+    { id: 'flow',     icon: Zap,             label: 'Flow Board',  color: undefined   },
+    { id: 'game',     icon: Gamepad2,        label: 'Game Studio', color: '#ffb300'   },
+    { id: 'voxel',    icon: Layers,          label: 'Voxel World', color: undefined   },
+    { id: 'mmo',      icon: Globe,           label: 'MMO Engine',  color: '#00e5a0'   },
   ];
 
   return (
@@ -192,25 +196,29 @@ function MobileDrawer({ open, onClose, stage, onNav, mode, onMode }: DrawerProps
         </div>
 
         {/* Nav items */}
-        <nav className="flex-1 px-3 py-3 flex flex-col gap-1">
+        <nav className="flex-1 px-3 py-3 flex flex-col gap-1 overflow-y-auto">
           {NAV_ITEMS.map(item => {
             const Icon   = item.icon;
             const active = stage === item.id;
+            const accent = item.color ?? '#00e5ff';
             return (
               <button
                 key={item.id}
                 onClick={() => nav(item.id)}
                 className={[
                   'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all',
-                  active
-                    ? 'bg-accent/12 text-accent border border-accent/25'
-                    : 'text-muted hover:text-text-primary hover:bg-white/4',
+                  active ? 'bg-accent/8 border' : 'text-muted hover:text-text-primary hover:bg-white/4',
                 ].join(' ')}
-                style={active ? { boxShadow: '0 0 12px rgba(0,229,255,0.1)' } : undefined}
+                style={active ? {
+                  color:        accent,
+                  borderColor:  accent + '30',
+                  background:   accent + '08',
+                  boxShadow:    `0 0 10px ${accent}15`,
+                } : undefined}
               >
-                <Icon size={16}/>
+                <Icon size={16} style={active ? { color: accent } : undefined}/>
                 {item.label}
-                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full bg-accent animate-glow-pulse"/>}
+                {active && <div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ background: accent }}/>}
               </button>
             );
           })}
@@ -308,103 +316,56 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Right-side controls */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex items-center gap-1 ml-auto">
           {/* Mode badge */}
           <ModeBadge mode={mode} onClick={toggleMode}/>
 
-          {/* Desktop nav links */}
-          {!isHome && (
-            <button
-              onClick={() => goStage('home')}
-              className="hidden md:flex items-center gap-1.5 text-xs text-muted hover:text-accent px-2.5 py-1.5 rounded-lg hover:bg-accent/6 transition-all border border-transparent hover:border-accent/15"
-            >
-              <LayoutDashboard size={13}/>
-              <span>Dashboard</span>
-            </button>
-          )}
+          {/* Desktop nav — icon-only on md, icon+label on xl */}
+          <nav className="hidden md:flex items-center gap-0.5 ml-1">
 
-          {isHome && (
+            {/* New Plan CTA — always visible on desktop */}
             <button
               onClick={() => { dispatch({ type: 'CLEAR_PROJECT' }); goStage('stufe1'); }}
-              className="hidden md:flex items-center gap-1.5 text-[12px] font-bold text-base bg-accent rounded-lg px-3 py-1.5 hover:brightness-110 transition-all cursor-pointer"
-              style={{ boxShadow: '0 0 12px rgba(0,229,255,0.3)' }}
+              className="flex items-center gap-1.5 text-[11px] font-bold text-base bg-accent rounded-lg px-2.5 py-1.5 hover:brightness-110 transition-all cursor-pointer mr-1.5"
+              style={{ boxShadow: '0 0 10px rgba(0,229,255,0.25)' }}
             >
-              <Plus size={12}/>New Plan
+              <Plus size={12}/><span className="hidden lg:inline">New Plan</span>
             </button>
-          )}
 
-          {/* Agents */}
-          <button
-            onClick={() => goStage('agenthub')}
-            className={[
-              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
-              state.stage === 'agenthub'
-                ? 'text-accent border-accent/30 bg-accent/8'
-                : 'text-muted border-transparent hover:text-accent hover:bg-accent/6 hover:border-accent/15',
-            ].join(' ')}
-          >
-            <Bot size={13}/><span>Agents</span>
-          </button>
+            {/* Nav items — data-driven, compact */}
+            {([
+              { id: 'home',     Icon: LayoutDashboard, label: 'Dashboard', accent: '#00e5ff' },
+              { id: 'agenthub', Icon: Bot,             label: 'Agents',    accent: '#00e5ff' },
+              { id: 'flow',     Icon: Zap,             label: 'Flow',      accent: '#00e5ff' },
+              { id: 'game',     Icon: Gamepad2,        label: 'Game',      accent: '#ffb300' },
+              { id: 'voxel',    Icon: Layers,          label: 'Voxel',     accent: '#00e5ff' },
+              { id: 'mmo',      Icon: Globe,           label: 'MMO',       accent: '#00e5a0' },
+              { id: 'admin',    Icon: Settings,        label: 'Admin',     accent: '#00e5ff', href: '/admin' },
+            ] as Array<{ id: string; Icon: typeof Globe; label: string; accent: string; href?: string }>).map(({ id, Icon, label, accent, href }) => {
+              const active  = state.stage === id;
+              const onClick = href ? undefined : () => goStage(id);
+              const cls = [
+                'flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-[11px] transition-all',
+                active ? 'border-[var(--a)]/30 bg-[var(--a)]/8' : 'border-transparent hover:bg-white/4',
+              ].join(' ');
+              const style = {
+                '--a': accent,
+                color:        active ? accent : undefined,
+                borderColor:  active ? accent + '35' : undefined,
+                background:   active ? accent + '10' : undefined,
+              } as React.CSSProperties;
 
-          {/* Flow Board */}
-          <button
-            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'flow' as import('@/types').Stage })}
-            className={[
-              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
-              state.stage === 'flow'
-                ? 'text-accent border-accent/30 bg-accent/8'
-                : 'text-muted border-transparent hover:text-accent hover:bg-accent/6 hover:border-accent/15',
-            ].join(' ')}
-          >
-            <Zap size={13}/><span>Flow</span>
-          </button>
-
-          {/* Game Studio */}
-          <button
-            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'game' as import('@/types').Stage })}
-            className={[
-              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
-              state.stage === 'game'
-                ? 'border-amber/30 bg-amber/8 text-amber'
-                : 'text-muted border-transparent hover:text-amber hover:bg-amber/6 hover:border-amber/15',
-            ].join(' ')}
-          >
-            <Gamepad2 size={13}/><span>Game</span>
-          </button>
-
-          {/* VLDB Voxel Engine */}
-          <button
-            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'voxel' as import('@/types').Stage })}
-            className={[
-              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
-              state.stage === 'voxel'
-                ? 'text-accent border-accent/30 bg-accent/8'
-                : 'text-muted border-transparent hover:text-accent hover:bg-accent/6 hover:border-accent/15',
-            ].join(' ')}
-          >
-            <Layers size={13}/><span>Voxel</span>
-          </button>
-
-          {/* MMO Engine */}
-          <button
-            onClick={() => dispatch({ type: 'SET_STAGE', stage: 'mmo' as import('@/types').Stage })}
-            className={[
-              'hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all',
-              state.stage === 'mmo'
-                ? 'text-success border-success/30 bg-success/8'
-                : 'text-muted border-transparent hover:text-success hover:bg-success/6 hover:border-success/15',
-            ].join(' ')}
-          >
-            <Globe size={13}/><span>MMO</span>
-          </button>
-
-          {/* Admin */}
-          <a
-            href="/admin"
-            className="hidden md:flex items-center gap-1.5 text-xs text-muted hover:text-accent px-2.5 py-1.5 rounded-lg hover:bg-accent/6 border border-transparent hover:border-accent/15 transition-all"
-          >
-            <Settings size={13}/><span>Admin</span>
-          </a>
+              return href ? (
+                <a key={id} href={href} className={cls} style={{ ...style, color: '#4a6880' }} title={label}>
+                  <Icon size={12}/><span className="hidden xl:inline">{label}</span>
+                </a>
+              ) : (
+                <button key={id} onClick={onClick} className={cls} style={style} title={label}>
+                  <Icon size={12}/><span className="hidden xl:inline">{label}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </header>
 

@@ -97,7 +97,7 @@ export function WizardModal() {
   }, [project, backendConfig, dispatch]);
 
   return (
-    <div className="flex items-start justify-center min-h-full px-4 py-8">
+    <div className="flex items-start justify-center min-h-full px-3 py-4 sm:px-6 sm:py-8">
       <div className="w-full max-w-2xl flex flex-col gap-3">
         {step==='idea' && <BackendSelector/>}
         <div className="rounded-xl border border-border bg-surface shadow-2xl overflow-hidden">
